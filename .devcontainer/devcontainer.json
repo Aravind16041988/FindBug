@@ -1,0 +1,33 @@
+{
+  "name": "ScanBug Codespaces",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "postCreateCommand": "npm install && npx playwright install --with-deps chromium",
+  "postStartCommand": "bash .devcontainer/start-remote-desktop.sh",
+  "forwardPorts": [
+    5173,
+    4000,
+    6080
+  ],
+  "portsAttributes": {
+    "4000": {
+      "label": "ScanBug API",
+      "onAutoForward": "notify"
+    },
+    "5173": {
+      "label": "ScanBug UI",
+      "onAutoForward": "openBrowser"
+    },
+    "6080": {
+      "label": "Remote Chromium (noVNC)",
+      "onAutoForward": "openBrowser",
+      "visibility": "private"
+    }
+  },
+  "remoteUser": "node",
+  "containerEnv": {
+    "SCANBUG_HEADLESS": "false",
+    "DISPLAY": ":1"
+  }
+}
