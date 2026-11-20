@@ -1,0 +1,1 @@
+{"name":"scanbug","private":true,"workspaces":["apps/*","packages/*"],"scripts":{"dev":"concurrently \"npm:api\" \"npm:web\"","api":"npm --workspace @scanbug/api run dev","web":"npm --workspace @scanbug/web run dev","build":"npm -ws run build","typecheck":"npm -ws run typecheck"},"devDependencies":{"concurrently":"^9.1.2","typescript":"^5.7.3"}}
