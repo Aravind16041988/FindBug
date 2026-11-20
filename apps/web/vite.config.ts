@@ -15,6 +15,7 @@ export default defineConfig({
           proxy.on("proxyReq", (proxyReq) => proxyReq.removeHeader("origin"));
         }
       },
+      "/live": { target: "http://127.0.0.1:4000", changeOrigin: true, ws: true },
       "/evidence": {
         target: "http://127.0.0.1:4000",
         changeOrigin: true,
