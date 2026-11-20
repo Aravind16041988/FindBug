@@ -11,7 +11,7 @@ AI-assisted autonomous QA: turn a plain-English test objective into a structured
 - Clearly labelled local fallback planner when no LLM is configured
 - Explicit human approval before browser execution
 - Playwright actions: navigate, click, fill, visibility/text assertions, screenshots
-- Explicit target-host allowlist; localhost blocked unless opted into for local development
+- Automatic access to public HTTP/HTTPS websites with DNS/IP-based SSRF protections
 - In-memory run state and screenshot evidence
 
 Not yet implemented: database persistence, authentication/multi-tenancy, encrypted credential vault, robust network capture, visual AI comparison, selector self-healing, API test authoring, distributed workers, or production deployment hardening. These are future milestones, not implied by this MVP.
@@ -26,7 +26,7 @@ npm install
 npx playwright install chromium
 ```
 
-Edit `.env` and set `SCANBUG_ALLOWED_HOSTS` to the exact hostname(s) of test systems you own or are authorized to assess. For example: `SCANBUG_ALLOWED_HOSTS=staging.example.com`.
+No domain allowlist is needed for public websites. ScanBug validates each navigation and browser request, rejecting localhost, private/reserved IP ranges, internal hostnames, and non-HTTP(S) protocols.
 
 ```bash
 npm run dev
@@ -35,7 +35,7 @@ npm run dev
 Web UI: http://localhost:5173  
 API health: http://localhost:4000/api/health
 
-For local test applications only, add `localhost,127.0.0.1` to `SCANBUG_ALLOWED_HOSTS` and set `SCANBUG_ALLOW_LOCAL=true`. Never enable this override on an exposed/untrusted runner.
+For local development only, set `SCANBUG_ALLOW_LOCAL=true` to permit localhost targets. Never enable this override on a publicly accessible or untrusted runner.
 
 ## Optional LLM provider
 
@@ -45,8 +45,9 @@ Set `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` in the root `.env`. The serve
 
 - Test only systems you own or are authorized to test.
 - Review the generated plan before approving execution.
-- Runner rejects hosts outside `SCANBUG_ALLOWED_HOSTS`.
-- Localhost is blocked unless the explicit local-development override is enabled.
+- Public HTTP/HTTPS destinations are allowed without per-domain configuration.
+- Every browser request, including page resources and redirects, is checked against DNS-resolved IP addresses.
+- Localhost, private/reserved IP ranges, internal hostnames and non-HTTP(S) protocols are blocked. Localhost can be enabled only for isolated local development with `SCANBUG_ALLOW_LOCAL=true`.
 - This MVP has no password-entry action and no destructive/payment/account-management actions.
 - Run records are in memory and disappear when the API restarts. Screenshots are written under `apps/api/storage`.
 
