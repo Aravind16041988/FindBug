@@ -1,0 +1,1 @@
+{"name":"@scanbug/shared","version":"0.1.0","type":"module","main":"src/index.ts","dependencies":{"zod":"^3.24.2"},"scripts":{"build":"tsc --noEmit","typecheck":"tsc --noEmit"}}

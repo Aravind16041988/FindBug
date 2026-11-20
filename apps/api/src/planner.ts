@@ -1,0 +1,8 @@
+import {PlanSchema,type TestPlan} from "@scanbug/shared";
+export async function generatePlan(goal:string,targetUrl:string):Promise<{plan:TestPlan;provider:string}>{
+const target=new URL(targetUrl);if(!["http:","https:"].includes(target.protocol))throw Error("Only HTTP(S) URLs are supported.");
+const {LLM_BASE_URL,LLM_API_KEY,LLM_MODEL}=process.env;
+if(LLM_BASE_URL&&LLM_API_KEY&&LLM_MODEL){
+const r=await fetch(LLM_BASE_URL.replace(/\/$/,"")+"/chat/completions",{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${LLM_API_KEY}`},body:JSON.stringify({model:LLM_MODEL,temperature:0.1,response_format:{type:"json_object"},messages:[{role:"system",content:"Return JSON only: {title,objective,assumptions,steps}. Allowed actions: goto, click, fill, assertVisible, assertText, screenshot. Use only the supplied target origin. Never suggest destructive actions or credential entry."},{role:"user",content:`Target: ${targetUrl}\nGoal: ${goal}`}]})});
+if(!r.ok)throw Error(`LLM provider HTTP ${r.status}`);const d:any=await r.json();return{plan:PlanSchema.parse(JSON.parse(d.choices?.[0]?.message?.content||"{}")),provider:LLM_MODEL};}
+return{provider:"local-fallback (not an LLM)",plan:PlanSchema.parse({title:"Basic page check",objective:goal,assumptions:["Local fallback is a template, not AI-generated. Edit and review before approval."],steps:[{action:"goto",url:target.origin+target.pathname},{action:"assertVisible",by:"text",value:target.hostname},{action:"screenshot",name:"initial-page"}]})};}
