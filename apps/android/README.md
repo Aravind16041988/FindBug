@@ -11,13 +11,13 @@ This is a native Kotlin Android companion to the existing React/Vite + Express +
 - **Explore screen** performs a read-only inventory of visible, enabled clickable and editable controls, with labels and control types.
 - Displays a warning marker for labels that look sensitive or destructive (for example, payment, transfer, delete, purchase, submit, or sign out).
 - Allows a user to request an exact-label tap manually. The local safety guard blocks labels matching the sensitive/destructive keyword list.
-- Stores the latest accessible text snapshot locally in app preferences.
+- Stores the latest accessible UI snapshot locally in app preferences. Password values and text typed into editable fields are excluded; editable controls expose only their hint or content description.
 
 ## Current limitations
 
 This is a deterministic UI inspection and manual interaction POC, not an autonomous AI tester. It does not yet record/replay journeys, take screenshots, automatically navigate flows, assert expected outcomes, comprehensively detect crashes, or generate formal reports.
 
-The keyword guard is intentionally conservative but is not a complete safety system: labels can be ambiguous, hidden behind icons, localized, or worded differently. Review the target screen before every manual action. ScanBug does not tap controls automatically during exploration.
+The keyword guard is intentionally conservative but is not a complete safety system: labels can be ambiguous, hidden behind icons, localized, or worded differently. It checks the selected control and its clickable ancestors. Editable field contents and password values are not written into the snapshot. Review the target screen before every manual action. ScanBug does not tap controls automatically during exploration.
 
 Android restricts cross-app control. The user must explicitly enable the ScanBug Accessibility Service in Android Settings. Only UI exposed by the target app is discoverable; custom-drawn controls, protected screens, and unlabeled elements may not work. This app does not read target-app private files, memory, credentials, or source code. Test only apps you own or are authorized to test. Do not use it for payments, transfers, purchases, deletion, or other destructive actions.
 
