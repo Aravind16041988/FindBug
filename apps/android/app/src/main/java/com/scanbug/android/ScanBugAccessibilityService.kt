@@ -6,6 +6,8 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.View
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -29,6 +31,8 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private var panel: LinearLayout? = null
     private var statusText: TextView? = null
     private var inventoryText: TextView? = null
+    private var recordingText: TextView? = null
+    private var highlightView: View? = null
     private var latestReport: String = ""
     private var isRecording = false
     private val recordedSteps = mutableListOf<RecordedStep>()
@@ -65,157 +69,168 @@ class ScanBugAccessibilityService : AccessibilityService() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
     }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
     private fun showFloatingPanel() {
         if (panel != null) return
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(14, 10, 14, 10)
-            setBackgroundColor(0xEE202B3C.toInt())
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = GradientDrawable().apply {
+                setColor(0xFFF7F4EF.toInt())
+                cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), 0xFFE8E1D8.toInt())
+            }
+            elevation = dp(10).toFloat()
         }
         container.addView(TextView(this).apply {
-            text = "SCANBUG • CONTROLLED QA EXPLORER"
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 13f
+            text = "ScanBug"
+            setTextColor(0xFF25231F.toInt())
+            textSize = 20f
             typeface = Typeface.DEFAULT_BOLD
         })
-
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(Button(this).apply {
-            text = "Explore screen"
-            isAllCaps = false
-            setOnClickListener { exploreCurrentScreen() }
+        container.addView(TextView(this).apply {
+            text = "CONTROLLED QA EXPLORER"
+            setTextColor(0xFF77716A.toInt())
+            textSize = 10f
+            letterSpacing = 0.12f
         })
-        actions.addView(Button(this).apply {
-            text = "Share inventory"
-            isAllCaps = false
-            setOnClickListener { shareInventory() }
-        })
-        actions.addView(Button(this).apply {
-            text = "Stop"
-            isAllCaps = false
-            setOnClickListener {
-                prefs.edit().remove(KEY_TARGET_PACKAGE).apply()
-                isRecording = false
-                recordedSteps.clear()
-                latestReport = ""
-                removeFloatingPanel()
-            }
-        })
-        container.addView(actions)
-
-        val recorderActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        recorderActions.addView(Button(this).apply {
-            text = "Start recording"
-            isAllCaps = false
-            setOnClickListener {
-                recordedSteps.clear()
-                replayIndex = 0
-                skippedSensitiveSteps = 0
-                isRecording = true
-                statusText?.text = "Recording manual taps. ScanBug will not perform actions."
-            }
-        })
-        recorderActions.addView(Button(this).apply {
-            text = "Stop recording"
-            isAllCaps = false
-            setOnClickListener { stopRecording() }
-        })
-        recorderActions.addView(Button(this).apply {
-            text = "Share test flow"
-            isAllCaps = false
-            setOnClickListener { shareTestFlow() }
-        })
-        container.addView(recorderActions)
-
-        val caseActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        caseActions.addView(Button(this).apply {
-            text = "Review assertions"
-            isAllCaps = false
-            setOnClickListener { reviewAssertions() }
-        })
-        caseActions.addView(Button(this).apply {
-            text = "Save test case"
-            isAllCaps = false
-            setOnClickListener { saveReusableTestCase() }
-        })
-        caseActions.addView(Button(this).apply {
-            text = "Load saved"
-            isAllCaps = false
-            setOnClickListener { loadSavedTestCase() }
-        })
-        caseActions.addView(Button(this).apply {
-            text = "Check expected text"
-            isAllCaps = false
-            setOnClickListener { runVisibleTextAssertions() }
-        })
-        container.addView(caseActions)
-
-        val replayActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        replayActions.addView(Button(this).apply {
-            text = "Replay next"
-            isAllCaps = false
-            setOnClickListener { previewNextReplayStep() }
-        })
-        replayActions.addView(Button(this).apply {
-            text = "Reset replay"
-            isAllCaps = false
-            setOnClickListener {
-                replayIndex = 0
-                statusText?.text = "Replay position reset. No actions performed."
-            }
-        })
-        container.addView(replayActions)
-
-        val historyActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        historyActions.addView(Button(this).apply {
-            text = "Save run"
-            isAllCaps = false
-            setOnClickListener { saveExecutionRun() }
-        })
-        historyActions.addView(Button(this).apply {
-            text = "History / HTML report"
-            isAllCaps = false
-            setOnClickListener { shareExecutionHistoryHtml() }
-        })
-        container.addView(historyActions)
-
-
-        inventoryText = TextView(this).apply {
-            text = "Explore lists accessible controls and metadata only. It never taps controls or enters text."
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 11f
-            setPadding(0, 6, 0, 6)
+        recordingText = TextView(this).apply {
+            text = "● READY  ·  Manual mode"
+            setTextColor(0xFF68635C.toInt())
+            textSize = 12f
+            setPadding(0, dp(10), 0, dp(8))
         }
-        container.addView(ScrollView(this).apply {
-            addView(inventoryText)
-            layoutParams = LinearLayout.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT, 340
-            )
+        container.addView(recordingText)
+
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun action(label: String, onClick: () -> Unit, primary: Boolean = false) {
+            content.addView(Button(this).apply {
+                text = label
+                isAllCaps = false
+                textSize = 14f
+                setTextColor(if (primary) 0xFFFFFFFF.toInt() else 0xFF28251F.toInt())
+                background = GradientDrawable().apply {
+                    setColor(if (primary) 0xFFD97745.toInt() else 0xFFECE7DF.toInt())
+                    cornerRadius = dp(12).toFloat()
+                }
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                setOnClickListener { onClick() }
+                layoutParams = LinearLayout.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT, dp(46)
+                ).apply { bottomMargin = dp(6) }
+            })
+        }
+        action("Explore screen", { exploreCurrentScreen() })
+        action("AI test suggestions", { showAiSuggestions() }, true)
+        action("Share inventory", { shareInventory() })
+        action(if (isRecording) "Stop recording" else "Start recording", {
+            if (isRecording) stopRecording() else startRecording()
+        }, true)
+        action("Share test flow", { shareTestFlow() })
+        action("Review assertions", { reviewAssertions() })
+        action("Save / load test case", { showTestCaseActions() })
+        action("Replay next · Reset replay", {
+            previewNextReplayStep()
         })
+        action("Save run / HTML report", { saveExecutionRun(); shareExecutionHistoryHtml() })
+        action("Minimise panel", { removeFloatingPanel() })
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            addView(content)
+            layoutParams = LinearLayout.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, dp(430)
+            )
+        }
+        container.addView(scroll)
+        inventoryText = TextView(this).apply {
+            text = "Explore discovers accessible controls. AI suggestions are local heuristics until an approved AI provider is configured."
+            setTextColor(0xFF514C45.toInt())
+            textSize = 12f
+            setPadding(0, dp(8), 0, dp(6))
+        }
+        container.addView(inventoryText)
         statusText = TextView(this).apply {
-            text = "Read-only inspection. Perform actions manually in the target app."
-            setTextColor(0xFFFFFFFF.toInt())
+            text = "Ready. ScanBug will not perform actions without your approval."
+            setTextColor(0xFF77716A.toInt())
             textSize = 11f
         }
         container.addView(statusText)
 
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            dp(300), WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            x = 12
-            y = 80
+            x = dp(8)
+            y = dp(70)
         }
         runCatching {
             windowManager?.addView(container, params)
             panel = container
+            updateRecordingUi()
         }.onFailure {
             Toast.makeText(this, "Could not display ScanBug overlay: ${it.message}", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun showTestCaseActions() {
+        AlertDialog.Builder(this)
+            .setTitle("Test case")
+            .setItems(arrayOf("Save test case", "Load saved test case")) { _, which ->
+                if (which == 0) saveReusableTestCase() else loadSavedTestCase()
+            }.show()
+    }
+
+    private fun startRecording() {
+        recordedSteps.clear()
+        replayIndex = 0
+        skippedSensitiveSteps = 0
+        isRecording = true
+        updateRecordingUi()
+        statusText?.text = "Recording started. Tap controls in the selected app; captured actions will be highlighted."
+    }
+
+    private fun updateRecordingUi() {
+        recordingText?.apply {
+            text = if (isRecording) "● RECORDING  ·  ${recordedSteps.size} actions" else "○ READY  ·  ${recordedSteps.size} actions captured"
+            setTextColor(if (isRecording) 0xFFB8422B.toInt() else 0xFF68635C.toInt())
+        }
+    }
+
+    private fun showTapHighlight(bounds: Rect) {
+        if (bounds.width() <= 0 || bounds.height() <= 0) return
+        highlightView?.let { runCatching { windowManager?.removeView(it) } }
+        val marker = View(this).apply {
+            background = GradientDrawable().apply {
+                setColor(0x22D97745)
+                setStroke(dp(3), 0xFFD97745.toInt())
+                cornerRadius = dp(8).toFloat()
+            }
+        }
+        val params = WindowManager.LayoutParams(
+            bounds.width().coerceAtLeast(dp(24)), bounds.height().coerceAtLeast(dp(24)),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = bounds.left
+            y = bounds.top
+        }
+        runCatching {
+            windowManager?.addView(marker, params)
+            highlightView = marker
+        }
+    }
+
+    private fun clearTapHighlight() {
+        highlightView?.let { runCatching { windowManager?.removeView(it) } }
+        highlightView = null
     }
 
     private fun removeFloatingPanel() {
@@ -223,6 +238,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         panel = null
         statusText = null
         inventoryText = null
+        recordingText = null
     }
 
     private fun targetRoot(): AccessibilityNodeInfo? {
@@ -245,72 +261,92 @@ class ScanBugAccessibilityService : AccessibilityService() {
         val selectedPackage = prefs.getString(KEY_TARGET_PACKAGE, null)
         if (selectedPackage.isNullOrBlank()) {
             removeFloatingPanel()
+            clearTapHighlight()
             return
         }
         val eventPackage = event.packageName?.toString()
-
         if (isRecording && eventPackage == selectedPackage &&
             event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
             recordManualTap(event, selectedPackage)
         }
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (eventPackage == selectedPackage) {
-                showFloatingPanel()
-            } else if (!eventPackage.isNullOrBlank()) {
-                removeFloatingPanel()
-            }
+            if (eventPackage == selectedPackage) showFloatingPanel()
+            else if (!eventPackage.isNullOrBlank()) removeFloatingPanel()
             return
         }
         if (eventPackage == selectedPackage) showFloatingPanel()
     }
 
     private fun recordManualTap(event: AccessibilityEvent, selectedPackage: String) {
-        val source = event.source ?: return
+        val source = event.source
+        var label = ""
+        var className = event.className?.toString()?.substringAfterLast('.').orEmpty()
+        var resourceId = ""
+        val bounds = Rect()
         try {
-            if (source.packageName?.toString() != selectedPackage) return
-            var ancestor: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(source)
-            var depth = 0
-            var blocked = false
-            while (ancestor != null && depth < 6) {
-                if (ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(ancestor))) {
-                    blocked = true
-                    break
+            if (source != null) {
+                if (source.packageName?.toString() != selectedPackage) return
+                if (source.isEditable || source.isPassword) {
+                    statusText?.text = "Editable control tap observed; value was not recorded."
+                    return
                 }
-                val parent = ancestor.parent
-                ancestor.recycle()
-                ancestor = parent
-                depth++
+                var ancestor: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(source)
+                var depth = 0
+                var blocked = false
+                while (ancestor != null && depth < 6) {
+                    if (ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(ancestor))) {
+                        blocked = true
+                        break
+                    }
+                    val parent = ancestor.parent
+                    ancestor.recycle()
+                    ancestor = parent
+                    depth++
+                }
+                ancestor?.recycle()
+                if (blocked) {
+                    skippedSensitiveSteps++
+                    statusText?.text = "Potentially sensitive action omitted from recording."
+                    return
+                }
+                label = nodeLabel(source)
+                className = source.className?.toString()?.substringAfterLast('.').orEmpty()
+                resourceId = source.viewIdResourceName.orEmpty()
+                source.getBoundsInScreen(bounds)
+            } else {
+                // Some apps emit a click event without a source node. Capture only the event's
+                // non-editable click label and class; never read editable text or field contents.
+                label = event.text?.joinToString(" ")?.trim().orEmpty()
+                if (ScanBugSafetyPolicy.isPotentiallyDestructive(label)) {
+                    skippedSensitiveSteps++
+                    statusText?.text = "Potentially sensitive action omitted from recording."
+                    return
+                }
             }
-            ancestor?.recycle()
-            if (blocked) {
-                skippedSensitiveSteps++
-                return
-            }
-            val label = nodeLabel(source).ifBlank {
-                friendlyType(source, source.className?.toString().orEmpty())
-            }.replace(Regex("\\s+"), " ").take(100)
-            val className = source.className?.toString()?.substringAfterLast('.').orEmpty()
-            val resourceId = source.viewIdResourceName.orEmpty()
-            val bounds = Rect()
-            source.getBoundsInScreen(bounds)
+            label = label.ifBlank { className.ifBlank { "Unlabelled control" } }
+                .replace(Regex("\\s+"), " ").take(100)
             val number = recordedSteps.size + 1
             recordedSteps.add(
                 RecordedStep(
-                    action = number.toString() + ". Tap: " + label,
+                    action = "$number. Tap: $label",
                     controlType = className.ifBlank { "Unknown" },
                     resourceId = resourceId.ifBlank { "not exposed" },
-                    bounds = bounds.flattenToString()
+                    bounds = if (bounds.isEmpty) "not exposed" else bounds.flattenToString()
                 )
             )
-            statusText?.text = "Recording manual taps: " + recordedSteps.size + " steps captured."
+            if (!bounds.isEmpty) showTapHighlight(bounds)
+            updateRecordingUi()
+            statusText?.text = "Captured action $number: $label"
         } finally {
-            source.recycle()
+            source?.recycle()
         }
     }
 
     private fun stopRecording() {
         isRecording = false
+        updateRecordingUi()
+        clearTapHighlight()
         inventoryText?.text = if (recordedSteps.isEmpty()) {
             "No manual taps recorded. Start recording, then perform actions yourself in the target app."
         } else {
@@ -319,7 +355,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
                 if (skippedSensitiveSteps > 0) "\n\n" + skippedSensitiveSteps +
                     " sensitive/destructive action(s) omitted." else ""
         }
-        statusText?.text = "Recording stopped. ScanBug did not execute any actions."
+        statusText?.text = "Recording stopped. ${recordedSteps.size} actions captured; ScanBug did not execute any actions."
     }
 
     private fun shareTestFlow() {
@@ -856,6 +892,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        clearTapHighlight()
         removeFloatingPanel()
         super.onDestroy()
     }
