@@ -33,7 +33,7 @@ class MainActivity : Activity() {
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         })
         content.addView(TextView(this).apply {
-            text = "Your mobile QA companion. Explore screens, get on-device test ideas, record manual actions and review test results."
+            text = "AI-first mobile QA. Select an app and run autonomous safe UI exploration; recording and replay are secondary tools."
             textSize = 15f
             setTextColor(0xFF68635C.toInt())
             setPadding(0, 12, 0, 20)
@@ -44,7 +44,7 @@ class MainActivity : Activity() {
         content.addView(actionButton("Review access & enable service") { showAccessibilityDisclosure() })
         content.addView(actionButton("Open selected app") { launchSelectedApp() })
         content.addView(TextView(this).apply {
-            text = "Hybrid AI runtime: local rule-based analysis works offline. Optional remote AI is not enabled in this build. UI metadata stays on this device; editable values and passwords are excluded."
+            text = "AI runtime: this build uses an on-device heuristic planner to explore safe, labelled navigation controls and generate test ideas. No cloud model is connected. Editable values and passwords are excluded; no screen content is uploaded."
             textSize = 13f
             setTextColor(0xFF68635C.toInt())
             setPadding(0, 18, 0, 18)
@@ -63,7 +63,7 @@ class MainActivity : Activity() {
         val message = """
             ScanBug uses Android Accessibility Service to inspect the visible interface of the app you select, including accessible control labels, descriptions and control types.
 
-            This access can expose sensitive information displayed by that app. ScanBug uses accessible UI metadata locally for inventory, manual click recording and local test suggestions. Editable field values and password values are excluded. The app does not type text or upload inspected content. Replay, when used, requires a separate approval for each click. Inventory, test cases and reports are shared only when you explicitly request sharing.
+            This access can expose sensitive information displayed by that app. ScanBug uses accessible UI metadata locally for autonomous safe navigation exploration, inventory, manual click recording and local test suggestions. The current agent does not enter text or submit forms. Editable field values and password values are excluded. The app does not type text or upload inspected content. Replay, when used, requires a separate approval for each click. Inventory, test cases and reports are shared only when you explicitly request sharing.
 
             Enable the service only for apps you own or are authorized to test. You can decline now and enable it later from this screen. You can turn the service off at any time in Android Accessibility Settings.
         """.trimIndent()
