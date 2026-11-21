@@ -67,7 +67,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
                 val label = labelInput?.text?.toString()?.trim().orEmpty()
                 if (label.isBlank()) {
                     labelInput?.error = "Enter a visible label"
-                } else if (isPotentiallyDestructive(label)) {
+                } else if (ScanBugSafetyPolicy.ScanBugSafetyPolicy.isPotentiallyDestructive(label)) {
                     statusText?.text = "Blocked for safety: '$label' may perform a sensitive action."
                 } else {
                     val ok = tapVisibleLabel(label)
@@ -207,7 +207,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         val label = nodeLabel(node)
         if (node.isVisibleToUser && node.isEnabled && (node.isClickable || node.isEditable)) {
             val type = if (node.isEditable) "INPUT" else "BUTTON"
-            val safeNote = if (isPotentiallyDestructive(label)) " [SENSITIVE — NOT TO BE TAPPED]" else ""
+            val safeNote = if (ScanBugSafetyPolicy.isPotentiallyDestructive(label)) " [SENSITIVE — NOT TO BE TAPPED]" else ""
             output.add("${output.size + 1}. [$type] ${label.ifBlank { "(unlabelled control)" }}$safeNote")
         }
         for (i in 0 until node.childCount) {
@@ -218,14 +218,15 @@ class ScanBugAccessibilityService : AccessibilityService() {
     }
 
     private fun nodeLabel(node: AccessibilityNodeInfo): String {
-        val text = node.text?.toString()?.trim().orEmpty()
         val description = node.contentDescription?.toString()?.trim().orEmpty()
+        // Never persist text typed into an input. Password values are excluded.
+        if (node.isPassword) return description.ifBlank { "Password field" }
+        if (node.isEditable) {
+            val hint = node.hintText?.toString()?.trim().orEmpty()
+            return listOf(description, hint).filter { it.isNotBlank() }.distinct().joinToString(" / ")
+        }
+        val text = node.text?.toString()?.trim().orEmpty()
         return listOf(text, description).filter { it.isNotBlank() }.distinct().joinToString(" / ")
-    }
-
-    private fun isPotentiallyDestructive(label: String): Boolean {
-        val normalized = label.lowercase()
-        return BLOCKED_TERMS.any { term -> normalized.contains(term) }
     }
 
     private fun tapVisibleLabel(requested: String): Boolean {
@@ -236,19 +237,27 @@ class ScanBugAccessibilityService : AccessibilityService() {
                 (it.text?.toString()?.equals(requested, true) == true ||
                  it.contentDescription?.toString()?.equals(requested, true) == true)
         }
+        val ancestors = mutableListOf<AccessibilityNodeInfo>()
         var actionNode = candidate
         var depth = 0
-        while (actionNode != null && !actionNode.isClickable && depth < 5) {
-            actionNode = actionNode.parent
+        var blockedByAncestor = false
+        while (actionNode != null && depth <= 5) {
+            if (ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(actionNode))) blockedByAncestor = true
+            if (actionNode.isClickable) break
+            val parent = actionNode.parent
+            if (parent == null) actionNode = null else {
+                ancestors.add(parent)
+                actionNode = parent
+            }
             depth++
         }
-        val success = actionNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-        if (actionNode !== candidate) actionNode?.recycle()
+        val success = !blockedByAncestor && actionNode?.isClickable == true &&
+            actionNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        ancestors.forEach { runCatching { it.recycle() } }
         matches.forEach { runCatching { it.recycle() } }
         root.recycle()
         return success
     }
-
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
