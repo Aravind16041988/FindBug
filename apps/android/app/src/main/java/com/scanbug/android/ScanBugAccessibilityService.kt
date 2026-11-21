@@ -67,7 +67,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
                 val label = labelInput?.text?.toString()?.trim().orEmpty()
                 if (label.isBlank()) {
                     labelInput?.error = "Enter a visible label"
-                } else if (ScanBugSafetyPolicy.ScanBugSafetyPolicy.isPotentiallyDestructive(label)) {
+                } else if (ScanBugSafetyPolicy.isPotentiallyDestructive(label)) {
                     statusText?.text = "Blocked for safety: '$label' may perform a sensitive action."
                 } else {
                     val ok = tapVisibleLabel(label)
