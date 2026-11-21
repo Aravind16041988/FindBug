@@ -960,8 +960,8 @@ class ScanBugAccessibilityService : AccessibilityService() {
             !node.isCheckable && !node.isLongClickable && !node.isScrollable &&
             node.isVisibleToUser && node.isEnabled && node.isClickable &&
             !ScanBugSafetyPolicy.isPotentiallyDestructive(label) &&
-            !Regex("(?i)\b(login|sign in|sign up|log out|logout|account|profile|checkout|cart|book|reserve|call|email|share|settings|permission|install|uninstall)\b").containsMatchIn(label) &&
-            Regex("(?i)\b(home|back|menu|tab|search|filter|category|details|view|expand|collapse|next|previous|more|close panel)\b").containsMatchIn(label)
+            !Regex("(?i)\\b(login|sign in|sign up|log out|logout|account|profile|checkout|cart|book|reserve|call|email|share|settings|permission|install|uninstall)\\b").containsMatchIn(label) &&
+            Regex("(?i)\\b(home|back|menu|tab|search|filter|category|details|view|expand|collapse|next|previous|more|close panel)\\b").containsMatchIn(label)
         if (safeLabel && !aiVisited.contains(key)) return AiCandidate(key, label, resourceId)
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
