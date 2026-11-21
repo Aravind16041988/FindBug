@@ -258,10 +258,12 @@ class ScanBugAccessibilityService : AccessibilityService() {
             source.getBoundsInScreen(bounds)
             val number = recordedSteps.size + 1
             recordedSteps.add(
-                number.toString() + ". Tap: " + label +
-                    " | Type: " + className.ifBlank { "Unknown" } +
-                    " | Resource ID: " + resourceId.ifBlank { "not exposed" } +
-                    " | Bounds: " + bounds.flattenToString()
+                RecordedStep(
+                    action = number.toString() + ". Tap: " + label,
+                    controlType = className.ifBlank { "Unknown" },
+                    resourceId = resourceId.ifBlank { "not exposed" },
+                    bounds = bounds.flattenToString()
+                )
             )
             statusText?.text = "Recording manual taps: " + recordedSteps.size + " steps captured."
         } finally {
@@ -275,7 +277,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
             "No manual taps recorded. Start recording, then perform actions yourself in the target app."
         } else {
             "RECORDED TEST FLOW — " + recordedSteps.size + " steps\\n\\n" +
-                recordedSteps.joinToString("\\n") +
+                recordedSteps.mapIndexed { index, step -> (index + 1).toString() + ". " + step.action + " | " + step.result }.joinToString("\\n") +
                 if (skippedSensitiveSteps > 0) "\\n\\n" + skippedSensitiveSteps +
                     " sensitive/destructive action(s) omitted." else ""
         }
@@ -298,7 +300,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
             "Sensitive/destructive actions omitted: " + skippedSensitiveSteps + "\\n" +
             "Privacy: editable field values and password values are not recorded.\\n" +
             "Execution: manual user actions only; ScanBug did not replay or perform actions.\\n\\n" +
-            recordedSteps.joinToString("\\n")
+            recordedSteps.mapIndexed { index, step -> formatStep(index + 1, step) }.joinToString("\\n\\n")
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, "ScanBug Manual Test Flow")
