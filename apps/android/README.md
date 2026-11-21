@@ -1,4 +1,4 @@
-# ScanBug Android 0.9.0 — controlled mobile QA explorer
+# ScanBug Android 0.9.1 — controlled mobile QA explorer
 
 ScanBug is a native Android QA companion for apps the tester explicitly selects and is authorized to test.
 
@@ -8,7 +8,9 @@ ScanBug is a native Android QA companion for apps the tester explicitly selects 
 - Uses Android Accessibility Service only after an explicit in-app disclosure and user enablement.
 - Explores accessible controls and metadata (labels, types, resource IDs, bounds, hierarchy and state).
 - Manual recording captures click events from the selected app while the tester explicitly starts recording.
-- Recording shows a live action count and a temporary outline around controls when Android exposes their screen bounds.
+- Recording automatically minimises the panel into a small draggable floating REC chip so the target app remains usable.
+- Tapping the chip expands ScanBug controls; pause/resume and stop are available from the expanded panel.
+- The chip shows the live action count; captured controls receive a temporary outline when Android exposes their screen bounds.
 - When a click event has no source node, ScanBug may capture its non-editable event label and class metadata. Events that cannot be safely identified are not recorded.
 - Sensitive/destructive action labels are filtered conservatively. This is a heuristic safeguard, not a guarantee.
 - Review assertions, expected/actual results, locally saved test cases, manually approved single-step replay, local run history and HTML report sharing are supported.
