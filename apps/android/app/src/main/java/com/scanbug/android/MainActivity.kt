@@ -63,7 +63,7 @@ class MainActivity : Activity() {
         val message = """
             ScanBug uses Android Accessibility Service to inspect the visible interface of the app you select, including accessible control labels, descriptions and control types.
 
-            This access can expose sensitive information displayed by that app. ScanBug uses the information only to show a read-only list on this device. This version does not tap, type, scroll, take screenshots, save screen contents, or send inspected content to a server.
+            This access can expose sensitive information displayed by that app. ScanBug uses accessible UI metadata locally for inventory, manual click recording and local test suggestions. Editable field values and password values are excluded. The app does not type text or upload inspected content. Replay, when used, requires a separate approval for each click. Inventory, test cases and reports are shared only when you explicitly request sharing.
 
             Enable the service only for apps you own or are authorized to test. You can decline now and enable it later from this screen. You can turn the service off at any time in Android Accessibility Settings.
         """.trimIndent()
