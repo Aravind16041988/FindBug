@@ -25,7 +25,7 @@ class MainActivity : Activity() {
 
         content.addView(TextView(this).apply { text = "ScanBug — on-device Android QA"; textSize = 22f })
         content.addView(TextView(this).apply {
-            text = "Select an app, enable the accessibility service, and open the target. A small ScanBug panel will stay available over the target app for UI inspection and label-based taps."
+            text = "Select an app, enable the accessibility service, and open the target. A small ScanBug panel appears only while the selected target app is active."
             textSize = 14f
             setPadding(0, 12, 0, 16)
         })
@@ -70,6 +70,7 @@ class MainActivity : Activity() {
         val app = apps.getOrNull(appSpinner.selectedItemPosition) ?: return
         val launch = packageManager.getLaunchIntentForPackage(app.packageName)
         if (launch == null) { Toast.makeText(this, "No launch activity found", Toast.LENGTH_SHORT).show(); return }
+        prefs.edit().putString(ScanBugAccessibilityService.KEY_TARGET_PACKAGE, app.packageName).apply()
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(launch)
     }
