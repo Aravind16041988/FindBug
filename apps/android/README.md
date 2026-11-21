@@ -18,7 +18,7 @@ A native Kotlin Android companion to ScanBug. It inspects the accessibility tree
 - **Save test case** stores one reusable test case locally on the phone; **Load saved** restores it for review or sharing. The saved case remains on the device until app data is cleared or the app is uninstalled.
 - Shared test-case reports include each step, expected result, actual result and manual status.
 - No playback/replay is implemented; recorded steps remain a human-reviewed test case.
-- The overlay has no target-app tap, text-entry, scroll, gesture or replay function.
+- The overlay has no text-entry, scroll, swipe or unattended replay function. Each individual click requires a separate confirmation.
 - A prominent in-app Accessibility disclosure appears before the user is sent to Android Accessibility Settings. The user must affirmatively accept; declining does not enable the service.
 
 ## Accessibility disclosure and privacy
