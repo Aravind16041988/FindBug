@@ -9,6 +9,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.view.MotionEvent
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -346,6 +348,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
         runCatching {
             windowManager?.addView(marker, params)
             highlightView = marker
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (highlightView === marker) clearTapHighlight()
+            }, 900)
         }
     }
 
