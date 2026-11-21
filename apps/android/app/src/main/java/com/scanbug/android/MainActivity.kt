@@ -30,19 +30,17 @@ class MainActivity : Activity() {
             textSize = 22f
         })
         content.addView(TextView(this).apply {
-            text = "ScanBug lists controls exposed by a selected app. It does not tap controls, enter text, take screenshots, or save screen snapshots. You remain in control of all actions."
+            text = "Inspect accessible controls in an app you choose. ScanBug does not tap controls, enter text, take screenshots, or save UI snapshots. You perform all actions yourself."
             textSize = 14f
             setPadding(0, 12, 0, 16)
         })
         appSpinner = Spinner(this)
         content.addView(appSpinner)
         content.addView(actionButton("Refresh app list") { loadApps() })
-        content.addView(actionButton("Enable ScanBug accessibility") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        })
+        content.addView(actionButton("Review access & enable service") { showAccessibilityDisclosure() })
         content.addView(actionButton("Open selected app") { launchSelectedApp() })
         content.addView(TextView(this).apply {
-            text = "When the selected app opens, use the ScanBug overlay and tap Explore screen. Inspection is read-only; interact with the target app yourself."
+            text = "The Accessibility Service can inspect UI content exposed by the selected app while enabled. Use the ScanBug overlay and tap Explore screen. Inspection stays on this device and is not saved or sent by ScanBug."
             textSize = 13f
             setPadding(0, 18, 0, 18)
         })
@@ -51,6 +49,29 @@ class MainActivity : Activity() {
             Toast.makeText(this, "ScanBug session stopped", Toast.LENGTH_SHORT).show()
         })
         loadApps()
+        if (!prefs.getBoolean(KEY_ACCESS_DISCLOSURE_ACCEPTED, false)) {
+            root.post { showAccessibilityDisclosure() }
+        }
+    }
+
+    private fun showAccessibilityDisclosure() {
+        val message = """
+            ScanBug uses Android Accessibility Service to inspect the visible interface of the app you select, including accessible control labels, descriptions and control types.
+
+            This access can expose sensitive information displayed by that app. ScanBug uses the information only to show a read-only list on this device. This version does not tap, type, scroll, take screenshots, save screen contents, or send inspected content to a server.
+
+            Enable the service only for apps you own or are authorized to test. You can decline now and enable it later from this screen. You can turn the service off at any time in Android Accessibility Settings.
+        """.trimIndent()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Important: Accessibility access")
+            .setMessage(message)
+            .setCancelable(false)
+            .setPositiveButton("I understand — continue") { _, _ ->
+                prefs.edit().putBoolean(KEY_ACCESS_DISCLOSURE_ACCEPTED, true).apply()
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            .setNegativeButton("Not now") { dialog, _ -> dialog.dismiss() }
+            .show()
     }
 
     private fun actionButton(label: String, action: () -> Unit) = Button(this).apply {
@@ -87,6 +108,10 @@ class MainActivity : Activity() {
         prefs.edit().putString(ScanBugAccessibilityService.KEY_TARGET_PACKAGE, app.packageName).apply()
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(launch)
+    }
+
+    companion object {
+        private const val KEY_ACCESS_DISCLOSURE_ACCEPTED = "accessibility_disclosure_accepted"
     }
 
     data class LaunchableApp(val label: String, val packageName: String)
