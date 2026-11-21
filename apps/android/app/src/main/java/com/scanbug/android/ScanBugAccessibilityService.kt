@@ -311,6 +311,156 @@ class ScanBugAccessibilityService : AccessibilityService() {
         }.onFailure { statusText?.text = "Could not open share sheet: " + it.message }
     }
 
+
+    private fun reviewAssertions() {
+        if (isRecording || recordedSteps.isEmpty()) {
+            statusText?.text = "Stop recording and capture steps before reviewing."
+            return
+        }
+        showAssertionEditor(0)
+    }
+
+    private fun showAssertionEditor(index: Int) {
+        if (index >= recordedSteps.size) {
+            inventoryText?.text = renderTestCase()
+            statusText?.text = "Review complete. Results are manually entered, not automatically verified."
+            return
+        }
+        val step = recordedSteps[index]
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 12, 24, 8)
+        }
+        form.addView(TextView(this).apply {
+            text = "Step " + (index + 1) + ": " + step.action + "\nControl: " + step.controlType
+        })
+        val expected = EditText(this).apply {
+            hint = "Expected result"
+            setText(step.expected)
+            minLines = 2
+        }
+        val actual = EditText(this).apply {
+            hint = "Actual result observed"
+            setText(step.actual)
+            minLines = 2
+        }
+        form.addView(expected)
+        form.addView(actual)
+        form.addView(TextView(this).apply { text = "Manual result" })
+        val group = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        listOf("NOT RUN", "PASS", "FAIL", "BLOCKED").forEach { value ->
+            group.addView(RadioButton(this).apply {
+                text = value
+                tag = value
+                isChecked = step.result == value
+            })
+        }
+        form.addView(group)
+        AlertDialog.Builder(this)
+            .setTitle("Expected result " + (index + 1) + "/" + recordedSteps.size)
+            .setView(form)
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Skip") { _, _ -> showAssertionEditor(index + 1) }
+            .setPositiveButton("Save & next") { _, _ ->
+                step.expected = expected.text.toString().trim()
+                step.actual = actual.text.toString().trim()
+                step.result = group.findViewById<RadioButton>(group.checkedRadioButtonId)
+                    ?.tag?.toString() ?: "NOT RUN"
+                showAssertionEditor(index + 1)
+            }
+            .show()
+    }
+
+    private fun formatStep(number: Int, step: RecordedStep): String {
+        return number.toString() + ". " + step.action + "\n" +
+            "   Control: " + step.controlType + " | Resource ID: " + step.resourceId +
+            " | Bounds: " + step.bounds + "\n" +
+            "   Expected: " + step.expected.ifBlank { "Not specified" } + "\n" +
+            "   Actual: " + step.actual.ifBlank { "Not entered" } + "\n" +
+            "   Result: " + step.result
+    }
+
+    private fun renderTestCase(): String {
+        return "SCANBUG TEST CASE\nTarget: " +
+            prefs.getString(KEY_TARGET_PACKAGE, "unknown") + "\nSteps: " + recordedSteps.size + "\n" +
+            "PASS: " + recordedSteps.count { it.result == "PASS" } +
+            " | FAIL: " + recordedSteps.count { it.result == "FAIL" } +
+            " | BLOCKED: " + recordedSteps.count { it.result == "BLOCKED" } +
+            " | NOT RUN: " + recordedSteps.count { it.result == "NOT RUN" } + "\n\n" +
+            recordedSteps.mapIndexed { index, step -> formatStep(index + 1, step) }.joinToString("\n\n") +
+            "\n\nResults are manually entered by the tester; ScanBug has not automatically asserted app behavior."
+    }
+
+    private fun saveReusableTestCase() {
+        if (isRecording || recordedSteps.isEmpty()) {
+            statusText?.text = "Stop recording and capture steps before saving."
+            return
+        }
+        val titleInput = EditText(this).apply {
+            hint = "Test case title"
+            setText("Manual test — " + prefs.getString(KEY_TARGET_PACKAGE, "app"))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Save reusable test case")
+            .setMessage("Saves this checklist and expected results locally on this phone.")
+            .setView(titleInput)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val json = org.json.JSONObject().apply {
+                    put("title", titleInput.text.toString().trim().ifBlank { "ScanBug test case" })
+                    put("targetPackage", prefs.getString(KEY_TARGET_PACKAGE, ""))
+                    put("steps", org.json.JSONArray().apply {
+                        recordedSteps.forEach { step ->
+                            put(org.json.JSONObject().apply {
+                                put("action", step.action)
+                                put("controlType", step.controlType)
+                                put("resourceId", step.resourceId)
+                                put("bounds", step.bounds)
+                                put("expected", step.expected)
+                                put("actual", step.actual)
+                                put("result", step.result)
+                            })
+                        }
+                    })
+                }
+                prefs.edit().putString(KEY_SAVED_TEST_CASE, json.toString()).apply()
+                inventoryText?.text = renderTestCase()
+                statusText?.text = "Test case saved locally on this phone."
+            }
+            .show()
+    }
+
+    private fun loadSavedTestCase() {
+        val raw = prefs.getString(KEY_SAVED_TEST_CASE, null)
+        if (raw.isNullOrBlank()) {
+            statusText?.text = "No saved test case on this phone."
+            return
+        }
+        runCatching {
+            val json = org.json.JSONObject(raw)
+            val steps = json.getJSONArray("steps")
+            recordedSteps.clear()
+            for (i in 0 until steps.length()) {
+                val item = steps.getJSONObject(i)
+                recordedSteps.add(
+                    RecordedStep(
+                        action = item.optString("action"),
+                        controlType = item.optString("controlType"),
+                        resourceId = item.optString("resourceId"),
+                        bounds = item.optString("bounds"),
+                        expected = item.optString("expected"),
+                        actual = item.optString("actual"),
+                        result = item.optString("result", "NOT RUN")
+                    )
+                )
+            }
+            inventoryText?.text = "SAVED TEST CASE: " + json.optString("title") + "\n\n" + renderTestCase()
+            statusText?.text = "Loaded " + recordedSteps.size + " saved steps."
+        }.onFailure {
+            statusText?.text = "Could not load saved test case: " + it.message
+        }
+    }
+
     private fun exploreCurrentScreen() {
         val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
         val root = targetRoot()
@@ -474,6 +624,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
     companion object {
         const val PREFS = "scanbug_local"
         const val KEY_TARGET_PACKAGE = "selected_target_package"
+        const val KEY_SAVED_TEST_CASE = "saved_reusable_test_case"
         private const val MAX_CONTROLS = 100
         private const val MAX_DEPTH = 20
     }
