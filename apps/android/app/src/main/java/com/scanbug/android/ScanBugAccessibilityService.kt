@@ -119,13 +119,34 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+
+        // Overlay/UI events from ScanBug itself must not affect the target session.
         if (event.packageName?.toString() == packageName) return
+
         val selectedPackage = prefs.getString(KEY_TARGET_PACKAGE, null)
-        if (selectedPackage.isNullOrBlank() || event.packageName?.toString() != selectedPackage) {
+        if (selectedPackage.isNullOrBlank()) {
             removeFloatingPanel()
             return
         }
-        showFloatingPanel()
+
+        val eventPackage = event.packageName?.toString()
+
+        // Keep the overlay stable during content changes from other windows
+        // (for example system UI/keyboard). Only a real app-window transition
+        // away from the selected target should close the panel.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            if (eventPackage == selectedPackage) {
+                showFloatingPanel()
+            } else if (!eventPackage.isNullOrBlank()) {
+                removeFloatingPanel()
+            }
+            return
+        }
+
+        // Content-change events from the selected app keep the panel visible.
+        if (eventPackage == selectedPackage) {
+            showFloatingPanel()
+        }
     }
 
     private fun exploreCurrentScreen() {
