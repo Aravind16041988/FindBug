@@ -276,7 +276,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         inventoryText?.text = if (recordedSteps.isEmpty()) {
             "No manual taps recorded. Start recording, then perform actions yourself in the target app."
         } else {
-            "RECORDED TEST FLOW — " + recordedSteps.size + " steps\\n\\n" +
+            "RECORDED TEST FLOW — " + recordedSteps.size + " steps\n\n" +
                 recordedSteps.mapIndexed { index, step -> (index + 1).toString() + ". " + step.action + " | " + step.result }.joinToString("\\n") +
                 if (skippedSensitiveSteps > 0) "\\n\\n" + skippedSensitiveSteps +
                     " sensitive/destructive action(s) omitted." else ""
