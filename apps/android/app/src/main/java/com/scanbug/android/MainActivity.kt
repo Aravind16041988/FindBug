@@ -7,11 +7,10 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.*
- 
+
 class MainActivity : Activity() {
     private lateinit var appSpinner: Spinner
     private lateinit var snapshotText: TextView
-    private lateinit var labelInput: EditText
     private val prefs by lazy { getSharedPreferences(ScanBugAccessibilityService.PREFS, Context.MODE_PRIVATE) }
     private var apps: List<LaunchableApp> = emptyList()
 
@@ -26,7 +25,7 @@ class MainActivity : Activity() {
 
         content.addView(TextView(this).apply { text = "ScanBug — on-device Android QA"; textSize = 22f })
         content.addView(TextView(this).apply {
-            text = "Choose an installed app, enable accessibility, open the target, then inspect its exposed UI."
+            text = "Select an app, enable the accessibility service, and open the target. A small ScanBug panel will stay available over the target app for UI inspection and label-based taps."
             textSize = 14f
             setPadding(0, 12, 0, 16)
         })
@@ -35,13 +34,9 @@ class MainActivity : Activity() {
         content.addView(actionButton("Refresh app list") { loadApps() })
         content.addView(actionButton("Enable ScanBug accessibility") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
         content.addView(actionButton("Open selected app") { launchSelectedApp() })
-        content.addView(actionButton("Read current screen") { showSnapshot() })
-        content.addView(TextView(this).apply { text = "Tap a visible control by its exact accessible label"; textSize = 16f; setPadding(0, 20, 0, 6) })
-        labelInput = EditText(this).apply { hint = "Example: Continue"; singleLine = true }
-        content.addView(labelInput)
-        content.addView(actionButton("Tap matching control") { requestTap() })
+        content.addView(actionButton("Read latest screen snapshot") { showSnapshot() })
         snapshotText = TextView(this).apply {
-            text = "Screen snapshot will appear here. Only UI information exposed through Android accessibility is available."
+            text = "Screen snapshot will appear here after opening a target app."
             textSize = 13f
             setPadding(0, 18, 0, 18)
         }
@@ -81,14 +76,7 @@ class MainActivity : Activity() {
 
     private fun showSnapshot() {
         val snapshot = prefs.getString(ScanBugAccessibilityService.KEY_SNAPSHOT, null)
-        snapshotText.text = snapshot ?: "No screen snapshot yet. Enable the service, open a target app, and return here."
-    }
-
-    private fun requestTap() {
-        val label = labelInput.text.toString().trim()
-        if (label.isEmpty()) { labelInput.error = "Enter an accessible label"; return }
-        sendBroadcast(Intent(ScanBugAccessibilityService.ACTION_TAP_TEXT).setPackage(packageName).putExtra(ScanBugAccessibilityService.EXTRA_TEXT, label))
-        Toast.makeText(this, "Tap request sent. Check the target app for the result.", Toast.LENGTH_SHORT).show()
+        snapshotText.text = snapshot ?: "No snapshot yet. Enable the service, open a target app, then return here."
     }
 
     data class LaunchableApp(val label: String, val packageName: String)
