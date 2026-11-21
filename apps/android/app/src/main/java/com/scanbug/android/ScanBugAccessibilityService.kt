@@ -166,6 +166,20 @@ class ScanBugAccessibilityService : AccessibilityService() {
         })
         container.addView(replayActions)
 
+        val historyActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        historyActions.addView(Button(this).apply {
+            text = "Save run"
+            isAllCaps = false
+            setOnClickListener { saveExecutionRun() }
+        })
+        historyActions.addView(Button(this).apply {
+            text = "History / HTML report"
+            isAllCaps = false
+            setOnClickListener { shareExecutionHistoryHtml() }
+        })
+        container.addView(historyActions)
+
+
         inventoryText = TextView(this).apply {
             text = "Explore lists accessible controls and metadata only. It never taps controls or enters text."
             setTextColor(0xFFFFFFFF.toInt())
@@ -626,6 +640,66 @@ class ScanBugAccessibilityService : AccessibilityService() {
         }
     }
 
+
+    private fun saveExecutionRun() {
+        if (isRecording || recordedSteps.isEmpty()) {
+            statusText?.text = "Stop recording and capture a test case before saving a run."
+            return
+        }
+        val history = runCatching { org.json.JSONArray(prefs.getString(KEY_RUN_HISTORY, "[]") ?: "[]") }
+            .getOrElse { org.json.JSONArray() }
+        val entry = org.json.JSONObject().apply {
+            put("timestamp", System.currentTimeMillis())
+            put("targetPackage", prefs.getString(KEY_TARGET_PACKAGE, "unknown"))
+            put("stepCount", recordedSteps.size)
+            put("pass", recordedSteps.count { it.result == "PASS" })
+            put("fail", recordedSteps.count { it.result == "FAIL" })
+            put("blocked", recordedSteps.count { it.result == "BLOCKED" })
+            put("notRun", recordedSteps.count { it.result == "NOT RUN" })
+            put("report", renderTestCase())
+        }
+        val updated = org.json.JSONArray().apply {
+            put(entry)
+            for (i in 0 until minOf(history.length(), 19)) put(history.getJSONObject(i))
+        }
+        prefs.edit().putString(KEY_RUN_HISTORY, updated.toString()).apply()
+        statusText?.text = "Run saved locally. History contains ${updated.length()} runs."
+    }
+
+    private fun shareExecutionHistoryHtml() {
+        val history = runCatching { org.json.JSONArray(prefs.getString(KEY_RUN_HISTORY, "[]") ?: "[]") }
+            .getOrElse { org.json.JSONArray() }
+        if (history.length() == 0) {
+            statusText?.text = "No saved execution history. Save a run first."
+            return
+        }
+        fun escapeHtml(value: String): String = value.replace("&", "&amp;")
+            .replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+        val rows = (0 until history.length()).joinToString("") { index ->
+            val item = history.getJSONObject(index)
+            val date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                .format(java.util.Date(item.optLong("timestamp")))
+            "<section><h2>Run ${index + 1} — ${escapeHtml(date)}</h2>" +
+                "<p><b>Target:</b> ${escapeHtml(item.optString("targetPackage"))} | " +
+                "<b>Steps:</b> ${item.optInt("stepCount")} | PASS: ${item.optInt("pass")} | " +
+                "FAIL: ${item.optInt("fail")} | BLOCKED: ${item.optInt("blocked")} | " +
+                "NOT RUN: ${item.optInt("notRun")}</p><pre>${escapeHtml(item.optString("report"))}</pre></section>"
+        }
+        val html = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">" +
+            "<title>ScanBug execution history</title><style>body{font:14px sans-serif;margin:24px;color:#222}" +
+            "section{border:1px solid #bbb;padding:16px;margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}" +
+            "</style></head><body><h1>ScanBug execution history</h1>" +
+            "<p>Generated locally on request. Editable field contents and passwords are excluded.</p>" +
+            rows + "</body></html>"
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/html"
+            putExtra(Intent.EXTRA_SUBJECT, "ScanBug execution history")
+            putExtra(Intent.EXTRA_TEXT, html)
+        }
+        runCatching { startActivity(Intent.createChooser(send, "Share ScanBug HTML report").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .onFailure { statusText?.text = "Could not open report share sheet: " + it.message }
+    }
+
     private fun exploreCurrentScreen() {
         val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
         val root = targetRoot()
@@ -790,6 +864,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         const val PREFS = "scanbug_local"
         const val KEY_TARGET_PACKAGE = "selected_target_package"
         const val KEY_SAVED_TEST_CASE = "saved_reusable_test_case"
+        private const val KEY_RUN_HISTORY = "local_execution_history"
         private const val MAX_CONTROLS = 100
         private const val MAX_DEPTH = 20
     }
