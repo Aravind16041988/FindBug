@@ -17,7 +17,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
+            setPadding(24, 28, 24, 28)
+            setBackgroundColor(0xFFF7F4EF.toInt())
         }
         val scroll = ScrollView(this)
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -26,13 +27,16 @@ class MainActivity : Activity() {
         setContentView(root)
 
         content.addView(TextView(this).apply {
-            text = "ScanBug — read-only Android UI explorer"
-            textSize = 22f
+            text = "ScanBug"
+            textSize = 30f
+            setTextColor(0xFF25231F.toInt())
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
         })
         content.addView(TextView(this).apply {
-            text = "Inspect accessible controls in an app you choose. ScanBug does not tap controls, enter text, take screenshots, or save UI snapshots. You perform all actions yourself."
-            textSize = 14f
-            setPadding(0, 12, 0, 16)
+            text = "Your mobile QA companion. Explore screens, get on-device test ideas, record manual actions and review test results."
+            textSize = 15f
+            setTextColor(0xFF68635C.toInt())
+            setPadding(0, 12, 0, 20)
         })
         appSpinner = Spinner(this)
         content.addView(appSpinner)
@@ -40,8 +44,9 @@ class MainActivity : Activity() {
         content.addView(actionButton("Review access & enable service") { showAccessibilityDisclosure() })
         content.addView(actionButton("Open selected app") { launchSelectedApp() })
         content.addView(TextView(this).apply {
-            text = "The Accessibility Service can inspect UI content exposed by the selected app while enabled. Use the ScanBug overlay and tap Explore screen. Inspection stays on this device and is not saved or sent by ScanBug."
+            text = "Hybrid AI runtime: local rule-based analysis works offline. Optional remote AI is not enabled in this build. UI metadata stays on this device; editable values and passwords are excluded."
             textSize = 13f
+            setTextColor(0xFF68635C.toInt())
             setPadding(0, 18, 0, 18)
         })
         content.addView(actionButton("Stop ScanBug session") {
@@ -58,7 +63,7 @@ class MainActivity : Activity() {
         val message = """
             ScanBug uses Android Accessibility Service to inspect the visible interface of the app you select, including accessible control labels, descriptions and control types.
 
-            This access can expose sensitive information displayed by that app. ScanBug uses the information only to show a read-only list on this device. This version does not tap, type, scroll, take screenshots, save screen contents, or send inspected content to a server.
+            This access can expose sensitive information displayed by that app. ScanBug uses accessible UI metadata locally for inventory, manual click recording and local test suggestions. Editable field values and password values are excluded. The app does not type text or upload inspected content. Replay, when used, requires a separate approval for each click. Inventory, test cases and reports are shared only when you explicitly request sharing.
 
             Enable the service only for apps you own or are authorized to test. You can decline now and enable it later from this screen. You can turn the service off at any time in Android Accessibility Settings.
         """.trimIndent()
