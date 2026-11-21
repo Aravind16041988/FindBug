@@ -1,53 +1,48 @@
-# ScanBug Android 0.9.1 — controlled mobile QA explorer
+# ScanBug Android 1.0.0 — AI-first mobile QA
 
-ScanBug is a native Android QA companion for apps the tester explicitly selects and is authorized to test.
+ScanBug is a native Android QA assistant for applications the tester explicitly selects and is authorized to test. AI-assisted exploration is the primary workflow; manual recording and replay are secondary.
 
-## What's implemented
+## Primary workflow: Run AI testing
 
-- Lists launchable apps and scopes inspection to the selected package.
-- Uses Android Accessibility Service only after an explicit in-app disclosure and user enablement.
-- Explores accessible controls and metadata (labels, types, resource IDs, bounds, hierarchy and state).
-- Manual recording captures click events from the selected app while the tester explicitly starts recording.
-- Recording automatically minimises the panel into a small draggable floating REC chip so the target app remains usable.
-- Tapping the chip expands ScanBug controls; pause/resume and stop are available from the expanded panel.
-- The chip shows the live action count; captured controls receive a temporary outline when Android exposes their screen bounds.
-- When a click event has no source node, ScanBug may capture its non-editable event label and class metadata. Events that cannot be safely identified are not recorded.
-- Sensitive/destructive action labels are filtered conservatively. This is a heuristic safeguard, not a guarantee.
-- Review assertions, expected/actual results, locally saved test cases, manually approved single-step replay, local run history and HTML report sharing are supported.
-- **AI Test Advisor:** on-device heuristic analysis of accessible UI metadata suggests functional, negative, navigation, input-validation, selection and accessibility test placeholders. A tester can inspect and add a suggestion to the editable test case.
-- Updated compact, scrollable, warm-neutral overlay with clear recording state and action controls.
+1. Select an app and open it.
+2. Tap **Run AI testing** in the ScanBug overlay.
+3. ScanBug minimises to a floating AI indicator so the target app remains usable.
+4. The on-device planner inspects accessible UI metadata and automatically explores a bounded set of clearly labelled, low-risk navigation controls.
+5. It highlights each attempted action, records a local action log and stops when no more safe actions are available, the action limit is reached, or the target app is no longer available.
+6. Tap the floating indicator to inspect progress or stop the run.
+7. ScanBug displays the exploration summary and test ideas. A human tester reviews outcomes and any scenario requiring data, credentials or business-specific expected results.
 
-## Hybrid AI runtime status
+## What this AI runtime does today
 
-This release implements the **local/offline analysis layer** and a provider-neutral boundary for future AI integration. The current suggestions are deterministic heuristics, not responses from a generative AI model. No remote AI endpoint, API key or network transmission is configured in this build.
+- Uses accessible control labels, types, package identity, visibility and enabled/clickable state to plan a bounded exploration.
+- Automatically clicks only explicitly allowlisted navigation-style labels (e.g. tabs, search/filter, category, details, back/home/menu) after applying destructive-action and sensitive-flow exclusions.
+- Caps an exploration run at eight click actions.
+- Does not click editable, password, checkable, long-clickable or scrollable controls.
+- Does not enter data, submit forms, authenticate, transact, purchase, delete, send messages, or trigger other high-impact operations.
+- Produces a local action summary; the existing AI Test Advisor can generate test placeholders from the current accessible screen.
 
-A future approved remote provider can enrich suggestions from a privacy-filtered metadata payload only after explicit project configuration and consent. Do not embed provider secrets in the APK. Prefer an organisation-managed gateway, short-lived credentials and server-side key storage.
+**AI honesty:** Version 1.0.0 is an offline, deterministic heuristic agent, not a connected generative AI model. It does not understand app business requirements or prove backend outcomes. The architecture is a privacy-first foundation for a future optional hybrid provider. No remote AI endpoint, API key, or network upload is configured.
+
+## Secondary workflows
+
+- Manual recording with a draggable floating REC chip, live action count, pause/resume and stop.
+- Individual, user-approved replay clicks.
+- Read-only UI inventory, visible-text assertions, local test cases, run history and HTML report sharing.
 
 ## Privacy and safety
 
-- Editable text and password values are not read for inventory, AI analysis or reports.
-- The local advisor receives only labels, control types, categories and basic state metadata. Password/OTP/destructive labels are excluded from its input.
-- No screenshots are captured and no screen data is uploaded.
-- Inventory, saved test cases and execution history remain local unless the tester explicitly shares them.
-- Replay is a separate, individually approved click action. No unattended chaining, text entry, scrolling or swiping.
-- AI suggestions are placeholders, not verified requirements or test results. A human tester must review them.
-- Keyword-based sensitive-action filtering can miss risky actions or flag harmless ones. Never use ScanBug to operate real payment, banking, medical or other sensitive accounts.
-
-Use only apps and environments you own or are authorized to test. The user can disable Accessibility access at any time in Android Settings.
-
-This is a QA utility, not an accessibility tool designed to assist people with disabilities. It must not set `isAccessibilityTool=true`. Google Play distribution requires accurate Accessibility API declarations and compliance with current policy; approval is not guaranteed.
+- Editable text and password values are not read or stored.
+- AI exploration uses only accessible UI metadata from the selected app.
+- No screenshots are captured or uploaded.
+- No cloud processing or telemetry is configured.
+- Only apps the tester owns or is authorized to test should be selected.
+- Label filtering is heuristic and cannot guarantee that an action is harmless. The agent therefore uses a narrow allowlist and excludes authentication, account, purchase, checkout, messaging, settings/permission and destructive flows. Test only in a controlled environment.
+- The agent does not autonomously fill forms or submit data. Such scenarios require a later test-data policy and explicit test-environment safeguards.
 
 ## Limitations
 
-Only controls exposed through Android accessibility APIs can be inspected. Custom-rendered, protected, unlabeled or source-less controls may not be highlighted or captured. A visual outline appears only when usable screen bounds are exposed. Local suggestions are based on visible UI metadata and cannot infer backend rules, business requirements or hidden workflows. Expected-text checks inspect only the current visible screen and do not prove a business transaction succeeded.
+Only controls exposed through Android Accessibility APIs can be inspected. Custom-rendered, protected, unlabeled or source-less controls may be missed. Some safe navigation controls may not match the allowlist and will be skipped. A click being accepted by Android does not prove the destination loaded or that business behaviour succeeded. The user must inspect the generated summary and verify outcomes.
 
 ## Build
 
-1. Open `apps/android` in Android Studio with JDK 17 and Android SDK Platform 35.
-2. Sync Gradle and build the debug APK.
-3. Install ScanBug on a test device.
-4. Read and accept the Accessibility disclosure, then enable the service in Android Settings.
-5. Select an app you are authorized to test and open it.
-6. Use **Explore screen** to inspect the current screen or **AI test suggestions** to generate local test placeholders.
-7. Start recording, perform actions manually in the target app, and stop recording to review the captured flow.
-8. Review assertions, save a test case and share reports only when needed.
+Open `apps/android` in Android Studio with JDK 17 and Android SDK Platform 35, sync Gradle, and build the debug APK. Enable the Accessibility Service only after reading the in-app disclosure. Select a permitted target app and choose **Run AI testing**.
