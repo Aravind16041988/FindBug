@@ -14,7 +14,10 @@ A native Kotlin Android companion to ScanBug. It inspects the accessibility tree
 - **Share inventory** opens Android's system share sheet only after the user taps it. No inventory is automatically uploaded, saved or transmitted.
 - **Manual test-flow recorder** captures only user-generated click events in the selected app while the user explicitly starts recording. It records labels and UI metadata, never enters text or invokes actions.
 - The recorder omits clicks whose labels match the conservative sensitive/destructive-action policy. It keeps the flow in memory only until the session ends and shares it only after the user explicitly taps Share test flow.
-- No playback/replay is implemented; recorded steps are a human-readable checklist for manual review.
+- **Review assertions** lets the tester define an expected result, record the observed result, and mark each step PASS, FAIL, BLOCKED or NOT RUN. These are manual assessments, not automated assertions.
+- **Save test case** stores one reusable test case locally on the phone; **Load saved** restores it for review or sharing. The saved case remains on the device until app data is cleared or the app is uninstalled.
+- Shared test-case reports include each step, expected result, actual result and manual status.
+- No playback/replay is implemented; recorded steps remain a human-reviewed test case.
 - The overlay has no target-app tap, text-entry, scroll, gesture or replay function.
 - A prominent in-app Accessibility disclosure appears before the user is sent to Android Accessibility Settings. The user must affirmatively accept; declining does not enable the service.
 
@@ -28,7 +31,7 @@ This app is a QA/testing utility, not an accessibility tool designed to assist p
 
 ## Limitations
 
-This is not a complete mobile automation tester. It records user-performed click steps as a manual checklist, but does not replay journeys, take screenshots, perform actions, assert expected outcomes, comprehensively detect crashes, or generate formal test reports. Only UI exposed through Android accessibility APIs can be discovered; custom-drawn, protected, or unlabeled controls may not appear. Resource IDs and bounds are provided only when Android exposes them.
+This is not a complete mobile automation tester. It records user-performed click steps and supports manually authored expected/actual results with a tester-selected status. It does not automatically assert app behavior, replay journeys, take screenshots, perform actions, comprehensively detect crashes, or generate formal automated test reports. Only UI exposed through Android accessibility APIs can be discovered; custom-drawn, protected, or unlabeled controls may not appear. Resource IDs and bounds are provided only when Android exposes them.
 
 ## Build with Android Studio
 
