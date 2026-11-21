@@ -26,6 +26,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private var statusText: TextView? = null
     private var inventoryText: TextView? = null
     private var latestReport: String = ""
+    private var isRecording = false
+    private val recordedSteps = mutableListOf<String>()
+    private var skippedSensitiveSteps = 0
 
     private data class ControlInfo(
         val category: String,
@@ -77,11 +80,36 @@ class ScanBugAccessibilityService : AccessibilityService() {
             isAllCaps = false
             setOnClickListener {
                 prefs.edit().remove(KEY_TARGET_PACKAGE).apply()
+                isRecording = false
+                recordedSteps.clear()
                 latestReport = ""
                 removeFloatingPanel()
             }
         })
         container.addView(actions)
+
+        val recorderActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        recorderActions.addView(Button(this).apply {
+            text = "Start recording"
+            isAllCaps = false
+            setOnClickListener {
+                recordedSteps.clear()
+                skippedSensitiveSteps = 0
+                isRecording = true
+                statusText?.text = "Recording manual taps. ScanBug will not perform actions."
+            }
+        })
+        recorderActions.addView(Button(this).apply {
+            text = "Stop recording"
+            isAllCaps = false
+            setOnClickListener { stopRecording() }
+        })
+        recorderActions.addView(Button(this).apply {
+            text = "Share test flow"
+            isAllCaps = false
+            setOnClickListener { shareTestFlow() }
+        })
+        container.addView(recorderActions)
 
         inventoryText = TextView(this).apply {
             text = "Explore lists accessible controls and metadata only. It never taps controls or enters text."
@@ -152,6 +180,11 @@ class ScanBugAccessibilityService : AccessibilityService() {
         }
         val eventPackage = event.packageName?.toString()
 
+        if (isRecording && eventPackage == selectedPackage &&
+            event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            recordManualTap(event, selectedPackage)
+        }
+
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (eventPackage == selectedPackage) {
                 showFloatingPanel()
@@ -161,6 +194,88 @@ class ScanBugAccessibilityService : AccessibilityService() {
             return
         }
         if (eventPackage == selectedPackage) showFloatingPanel()
+    }
+
+    private fun recordManualTap(event: AccessibilityEvent, selectedPackage: String) {
+        val source = event.source ?: return
+        try {
+            if (source.packageName?.toString() != selectedPackage) return
+            var ancestor: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(source)
+            var depth = 0
+            var blocked = false
+            while (ancestor != null && depth < 6) {
+                if (ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(ancestor))) {
+                    blocked = true
+                    break
+                }
+                val parent = ancestor.parent
+                ancestor.recycle()
+                ancestor = parent
+                depth++
+            }
+            ancestor?.recycle()
+            if (blocked) {
+                skippedSensitiveSteps++
+                return
+            }
+            val label = nodeLabel(source).ifBlank {
+                friendlyType(source, source.className?.toString().orEmpty())
+            }.replace(Regex("\\s+"), " ").take(100)
+            val className = source.className?.toString()?.substringAfterLast('.').orEmpty()
+            val resourceId = source.viewIdResourceName.orEmpty()
+            val bounds = Rect()
+            source.getBoundsInScreen(bounds)
+            val number = recordedSteps.size + 1
+            recordedSteps.add(
+                number.toString() + ". Tap: " + label +
+                    " | Type: " + className.ifBlank { "Unknown" } +
+                    " | Resource ID: " + resourceId.ifBlank { "not exposed" } +
+                    " | Bounds: " + bounds.flattenToString()
+            )
+            statusText?.text = "Recording manual taps: " + recordedSteps.size + " steps captured."
+        } finally {
+            source.recycle()
+        }
+    }
+
+    private fun stopRecording() {
+        isRecording = false
+        inventoryText?.text = if (recordedSteps.isEmpty()) {
+            "No manual taps recorded. Start recording, then perform actions yourself in the target app."
+        } else {
+            "RECORDED TEST FLOW — " + recordedSteps.size + " steps\\n\\n" +
+                recordedSteps.joinToString("\\n") +
+                if (skippedSensitiveSteps > 0) "\\n\\n" + skippedSensitiveSteps +
+                    " sensitive/destructive action(s) omitted." else ""
+        }
+        statusText?.text = "Recording stopped. ScanBug did not execute any actions."
+    }
+
+    private fun shareTestFlow() {
+        if (isRecording) {
+            statusText?.text = "Stop recording before sharing the test flow."
+            return
+        }
+        if (recordedSteps.isEmpty()) {
+            statusText?.text = "No recorded steps to share."
+            return
+        }
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val report = "ScanBug Manual Test Flow\\n" +
+            "Target package: " + targetPackage + "\\n" +
+            "Steps: " + recordedSteps.size + "\\n" +
+            "Sensitive/destructive actions omitted: " + skippedSensitiveSteps + "\\n" +
+            "Privacy: editable field values and password values are not recorded.\\n" +
+            "Execution: manual user actions only; ScanBug did not replay or perform actions.\\n\\n" +
+            recordedSteps.joinToString("\\n")
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "ScanBug Manual Test Flow")
+            putExtra(Intent.EXTRA_TEXT, report)
+        }
+        runCatching {
+            startActivity(Intent.createChooser(send, "Share ScanBug test flow").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { statusText?.text = "Could not open share sheet: " + it.message }
     }
 
     private fun exploreCurrentScreen() {
