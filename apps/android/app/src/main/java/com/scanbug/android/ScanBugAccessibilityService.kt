@@ -1,7 +1,9 @@
 package com.scanbug.android
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.view.Gravity
 import android.view.WindowManager
@@ -14,8 +16,8 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Strictly read-only UI explorer. It lists exposed controls but never clicks,
- * types, scrolls, or otherwise performs actions in the selected target app.
+ * Read-only UI inventory. It never invokes target-app actions or reads editable values.
+ * Reports are shared only after the user explicitly taps Share inventory.
  */
 class ScanBugAccessibilityService : AccessibilityService() {
     private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
@@ -23,6 +25,22 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private var panel: LinearLayout? = null
     private var statusText: TextView? = null
     private var inventoryText: TextView? = null
+    private var latestReport: String = ""
+
+    private data class ControlInfo(
+        val category: String,
+        val type: String,
+        val label: String,
+        val resourceId: String,
+        val className: String,
+        val bounds: String,
+        val hierarchy: String,
+        val enabled: Boolean,
+        val clickable: Boolean,
+        val checkable: Boolean,
+        val checked: Boolean,
+        val selected: Boolean
+    )
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -50,17 +68,23 @@ class ScanBugAccessibilityService : AccessibilityService() {
             setOnClickListener { exploreCurrentScreen() }
         })
         actions.addView(Button(this).apply {
+            text = "Share inventory"
+            isAllCaps = false
+            setOnClickListener { shareInventory() }
+        })
+        actions.addView(Button(this).apply {
             text = "Stop"
             isAllCaps = false
             setOnClickListener {
                 prefs.edit().remove(KEY_TARGET_PACKAGE).apply()
+                latestReport = ""
                 removeFloatingPanel()
             }
         })
         container.addView(actions)
 
         inventoryText = TextView(this).apply {
-            text = "Explore lists visible controls only. ScanBug does not tap controls or enter text."
+            text = "Explore lists accessible controls and metadata only. It never taps controls or enters text."
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 11f
             setPadding(0, 6, 0, 6)
@@ -68,7 +92,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         container.addView(ScrollView(this).apply {
             addView(inventoryText)
             layoutParams = LinearLayout.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT, 260
+                WindowManager.LayoutParams.MATCH_PARENT, 340
             )
         })
         statusText = TextView(this).apply {
@@ -87,7 +111,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         ).apply {
             gravity = Gravity.TOP or Gravity.END
             x = 12
-            y = 100
+            y = 80
         }
         runCatching {
             windowManager?.addView(container, params)
@@ -119,8 +143,6 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-
-        // Overlay/UI events from ScanBug itself must not affect the target session.
         if (event.packageName?.toString() == packageName) return
 
         val selectedPackage = prefs.getString(KEY_TARGET_PACKAGE, null)
@@ -128,12 +150,8 @@ class ScanBugAccessibilityService : AccessibilityService() {
             removeFloatingPanel()
             return
         }
-
         val eventPackage = event.packageName?.toString()
 
-        // Keep the overlay stable during content changes from other windows
-        // (for example system UI/keyboard). Only a real app-window transition
-        // away from the selected target should close the panel.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (eventPackage == selectedPackage) {
                 showFloatingPanel()
@@ -142,49 +160,102 @@ class ScanBugAccessibilityService : AccessibilityService() {
             }
             return
         }
-
-        // Content-change events from the selected app keep the panel visible.
-        if (eventPackage == selectedPackage) {
-            showFloatingPanel()
-        }
+        if (eventPackage == selectedPackage) showFloatingPanel()
     }
 
     private fun exploreCurrentScreen() {
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
         val root = targetRoot()
         if (root == null) {
             statusText?.text = "Target screen is not available. Reopen the selected app."
             return
         }
-        val controls = mutableListOf<String>()
-        collectControls(root, controls, 0)
+
+        val controls = mutableListOf<ControlInfo>()
+        collectControls(root, controls, 0, "root")
         root.recycle()
+
+        latestReport = buildReport(targetPackage, controls)
         inventoryText?.text = if (controls.isEmpty()) {
-            "No labelled interactive controls were exposed. Custom-drawn or unlabeled controls may not be discoverable."
+            "No accessible controls found. Custom-drawn, protected or unlabeled controls may not be exposed."
         } else {
-            "READ-ONLY INVENTORY — ${controls.size} controls\n\n" +
-                controls.take(MAX_CONTROLS).joinToString("\n") +
-                if (controls.size > MAX_CONTROLS) "\n\nShowing first $MAX_CONTROLS controls." else ""
+            renderInventory(controls)
         }
-        statusText?.text = "Scan complete. No target-app actions were performed."
+        statusText?.text = "Scan complete: ${controls.size} controls. Read-only; nothing was tapped or changed."
     }
 
-    private fun collectControls(node: AccessibilityNodeInfo, output: MutableList<String>, depth: Int) {
-        if (depth > 16 || output.size >= 100) return
-        val label = nodeLabel(node)
-        if (node.isVisibleToUser && node.isEnabled && (node.isClickable || node.isEditable)) {
-            val type = if (node.isEditable) "INPUT" else "CONTROL"
-            output.add("${output.size + 1}. [$type] ${label.ifBlank { "(unlabelled control)" }}")
+    private fun collectControls(
+        node: AccessibilityNodeInfo,
+        output: MutableList<ControlInfo>,
+        depth: Int,
+        path: String
+    ) {
+        if (depth > MAX_DEPTH || output.size >= MAX_CONTROLS) return
+
+        val interactive = node.isClickable || node.isEditable || node.isCheckable ||
+            node.isLongClickable || node.isScrollable
+        if (node.isVisibleToUser && interactive) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            val className = node.className?.toString().orEmpty()
+            val category = categoryFor(node, className)
+            output.add(
+                ControlInfo(
+                    category = category,
+                    type = friendlyType(node, className),
+                    label = nodeLabel(node).ifBlank { friendlyType(node, className) },
+                    resourceId = node.viewIdResourceName.orEmpty(),
+                    className = className.substringAfterLast('.'),
+                    bounds = "${bounds.left},${bounds.top} - ${bounds.right},${bounds.bottom}",
+                    hierarchy = path,
+                    enabled = node.isEnabled,
+                    clickable = node.isClickable,
+                    checkable = node.isCheckable,
+                    checked = node.isChecked,
+                    selected = node.isSelected
+                )
+            )
         }
+
         for (i in 0 until node.childCount) {
+            if (output.size >= MAX_CONTROLS) break
             val child = node.getChild(i) ?: continue
-            collectControls(child, output, depth + 1)
+            collectControls(child, output, depth + 1, "$path/$i")
             child.recycle()
+        }
+    }
+
+    private fun categoryFor(node: AccessibilityNodeInfo, className: String): String {
+        val lower = className.lowercase()
+        return when {
+            node.isEditable -> "INPUTS"
+            lower.contains("tab") -> "TABS"
+            node.isCheckable || lower.contains("switch") || lower.contains("checkbox") || lower.contains("radio") -> "SELECTIONS"
+            node.isClickable || node.isLongClickable -> "BUTTONS & ACTIONS"
+            else -> "OTHER CONTROLS"
+        }
+    }
+
+    private fun friendlyType(node: AccessibilityNodeInfo, className: String): String {
+        val lower = className.lowercase()
+        return when {
+            node.isPassword -> "Password field (value hidden)"
+            node.isEditable -> "Text input"
+            lower.contains("image") -> "Image"
+            lower.contains("tab") -> "Tab"
+            lower.contains("switch") -> "Switch"
+            lower.contains("checkbox") -> "Checkbox"
+            lower.contains("radio") -> "Radio button"
+            lower.contains("button") -> "Button"
+            lower.contains("textview") -> "Text"
+            lower.contains("edittext") -> "Text input"
+            else -> className.substringAfterLast('.').ifBlank { "Control" }
         }
     }
 
     private fun nodeLabel(node: AccessibilityNodeInfo): String {
         val description = node.contentDescription?.toString()?.trim().orEmpty()
-        // Never read or persist editable field contents or password values.
+        // Never read or expose editable field contents or password values.
         if (node.isPassword) return if (description.isNotBlank()) description else "Password field"
         if (node.isEditable) {
             val hint = node.hintText?.toString()?.trim().orEmpty()
@@ -192,6 +263,57 @@ class ScanBugAccessibilityService : AccessibilityService() {
         }
         val text = node.text?.toString()?.trim().orEmpty()
         return listOf(text, description).filter { it.isNotBlank() }.distinct().joinToString(" / ")
+    }
+
+    private fun renderInventory(controls: List<ControlInfo>): String {
+        val result = StringBuilder("READ-ONLY INVENTORY — ${controls.size} controls\n")
+        val groups = listOf("INPUTS", "BUTTONS & ACTIONS", "TABS", "SELECTIONS", "OTHER CONTROLS")
+        for (group in groups) {
+            val entries = controls.filter { it.category == group }
+            if (entries.isEmpty()) continue
+            result.append("\n").append(group).append(" (").append(entries.size).append(")\n")
+            entries.forEachIndexed { index, item ->
+                result.append("\n").append(index + 1).append(". ").append(item.label)
+                result.append("\n   Type: ").append(item.type)
+                result.append("\n   Resource ID: ").append(item.resourceId.ifBlank { "not exposed" })
+                result.append("\n   Class: ").append(item.className.ifBlank { "not exposed" })
+                result.append("\n   Bounds: ").append(item.bounds)
+                result.append("\n   Hierarchy: ").append(item.hierarchy)
+                result.append("\n   State: ").append(
+                    listOf(
+                        if (item.enabled) "enabled" else "disabled",
+                        if (item.clickable) "clickable" else null,
+                        if (item.checkable) if (item.checked) "checked" else "unchecked" else null,
+                        if (item.selected) "selected" else null
+                    ).filterNotNull().joinToString(", ")
+                ).append("\n")
+            }
+        }
+        if (controls.size >= MAX_CONTROLS) {
+            result.append("\nSafety limit: first $MAX_CONTROLS controls shown.")
+        }
+        return result.toString()
+    }
+
+    private fun buildReport(targetPackage: String, controls: List<ControlInfo>): String {
+        return "ScanBug UI Inventory\nTarget package: $targetPackage\nControls: ${controls.size}\n" +
+            "Privacy: editable values/password values excluded; report generated locally on user request.\n\n" +
+            renderInventory(controls)
+    }
+
+    private fun shareInventory() {
+        if (latestReport.isBlank()) {
+            statusText?.text = "Explore the screen first. No inventory is ready to share."
+            return
+        }
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "ScanBug UI Inventory")
+            putExtra(Intent.EXTRA_TEXT, latestReport)
+        }
+        val chooser = Intent.createChooser(send, "Share ScanBug inventory").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(chooser) }
+            .onFailure { statusText?.text = "Could not open share sheet: ${it.message}" }
     }
 
     override fun onInterrupt() = Unit
@@ -204,6 +326,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
     companion object {
         const val PREFS = "scanbug_local"
         const val KEY_TARGET_PACKAGE = "selected_target_package"
-        private const val MAX_CONTROLS = 40
+        private const val MAX_CONTROLS = 100
+        private const val MAX_DEPTH = 20
     }
 }
