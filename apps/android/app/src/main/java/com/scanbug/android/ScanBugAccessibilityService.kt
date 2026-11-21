@@ -736,6 +736,65 @@ class ScanBugAccessibilityService : AccessibilityService() {
             .onFailure { statusText?.text = "Could not open report share sheet: " + it.message }
     }
 
+    private fun showAiSuggestions() {
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val root = targetRoot()
+        if (root == null || root.packageName?.toString() != targetPackage) {
+            root?.recycle()
+            statusText?.text = "Open the selected app screen before asking for test suggestions."
+            return
+        }
+        val controls = mutableListOf<ControlInfo>()
+        collectControls(root, controls, 0, "root")
+        root.recycle()
+        if (controls.isEmpty()) {
+            statusText?.text = "No accessible controls found. Suggestions may be incomplete for custom-drawn or protected screens."
+            return
+        }
+        val suggestions = LocalTestAdvisor.analyze(controls.map {
+            LocalTestAdvisor.UiSignal(
+                label = it.label.take(100),
+                type = it.type,
+                category = it.category,
+                enabled = it.enabled,
+                clickable = it.clickable
+            )
+        })
+        val names = suggestions.map { "${it.priority} · ${it.title}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("AI Test Advisor · ${suggestions.size} suggestions")
+            .setItems(names) { _, index ->
+                val item = suggestions[index]
+                val detail = item.rationale + "\n\nSuggested placeholder steps:\n" +
+                    item.placeholderSteps.mapIndexed { i, step -> "${i + 1}. $step" }.joinToString("\n") +
+                    "\n\nExpected result:\n" + item.expected +
+                    "\n\nThese are heuristic suggestions from accessible UI metadata, not verified app requirements."
+                AlertDialog.Builder(this)
+                    .setTitle(item.title)
+                    .setMessage(detail)
+                    .setNegativeButton("Close", null)
+                    .setPositiveButton("Add placeholder") { _, _ ->
+                        recordedSteps.add(
+                            RecordedStep(
+                                action = "AI suggestion: ${item.title}",
+                                controlType = "AI test placeholder",
+                                resourceId = "not exposed",
+                                bounds = "not exposed",
+                                expected = item.expected
+                            )
+                        )
+                        inventoryText?.text = renderTestCase()
+                        statusText?.text = "Added '${item.title}' as an editable NOT RUN placeholder."
+                        updateRecordingUi()
+                    }
+                    .show()
+            }
+            .setNegativeButton("Close", null)
+            .setNeutralButton("Refresh analysis") { _, _ -> showAiSuggestions() }
+            .show()
+        statusText?.text = "Local analysis complete. No screen content was sent to a server."
+    }
+
     private fun exploreCurrentScreen() {
         val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
         val root = targetRoot()
