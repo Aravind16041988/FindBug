@@ -277,8 +277,8 @@ class ScanBugAccessibilityService : AccessibilityService() {
             "No manual taps recorded. Start recording, then perform actions yourself in the target app."
         } else {
             "RECORDED TEST FLOW — " + recordedSteps.size + " steps\n\n" +
-                recordedSteps.mapIndexed { index, step -> (index + 1).toString() + ". " + step.action + " | " + step.result }.joinToString("\\n") +
-                if (skippedSensitiveSteps > 0) "\\n\\n" + skippedSensitiveSteps +
+                recordedSteps.mapIndexed { index, step -> (index + 1).toString() + ". " + step.action + " | " + step.result }.joinToString("\n") +
+                if (skippedSensitiveSteps > 0) "\n\n" + skippedSensitiveSteps +
                     " sensitive/destructive action(s) omitted." else ""
         }
         statusText?.text = "Recording stopped. ScanBug did not execute any actions."
@@ -294,13 +294,13 @@ class ScanBugAccessibilityService : AccessibilityService() {
             return
         }
         val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
-        val report = "ScanBug Manual Test Flow\\n" +
-            "Target package: " + targetPackage + "\\n" +
-            "Steps: " + recordedSteps.size + "\\n" +
-            "Sensitive/destructive actions omitted: " + skippedSensitiveSteps + "\\n" +
-            "Privacy: editable field values and password values are not recorded.\\n" +
-            "Execution: manual user actions only; ScanBug did not replay or perform actions.\\n\\n" +
-            recordedSteps.mapIndexed { index, step -> formatStep(index + 1, step) }.joinToString("\\n\\n")
+        val report = "ScanBug Manual Test Flow\n" +
+            "Target package: " + targetPackage + "\n" +
+            "Steps: " + recordedSteps.size + "\n" +
+            "Sensitive/destructive actions omitted: " + skippedSensitiveSteps + "\n" +
+            "Privacy: editable field values and password values are not recorded.\n" +
+            "Execution: manual user actions only; ScanBug did not replay or perform actions.\n\n" +
+            recordedSteps.mapIndexed { index, step -> formatStep(index + 1, step) }.joinToString("\n\n")
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, "ScanBug Manual Test Flow")
