@@ -124,6 +124,24 @@ class ScanBugAccessibilityService : AccessibilityService() {
         })
         container.addView(recorderActions)
 
+        val caseActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        caseActions.addView(Button(this).apply {
+            text = "Review assertions"
+            isAllCaps = false
+            setOnClickListener { reviewAssertions() }
+        })
+        caseActions.addView(Button(this).apply {
+            text = "Save test case"
+            isAllCaps = false
+            setOnClickListener { saveReusableTestCase() }
+        })
+        caseActions.addView(Button(this).apply {
+            text = "Load saved"
+            isAllCaps = false
+            setOnClickListener { loadSavedTestCase() }
+        })
+        container.addView(caseActions)
+
         inventoryText = TextView(this).apply {
             text = "Explore lists accessible controls and metadata only. It never taps controls or enters text."
             setTextColor(0xFFFFFFFF.toInt())
