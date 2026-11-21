@@ -15,7 +15,7 @@ This is an early native Android proof of concept, separate from the existing Rea
 
 This is not yet an autonomous AI tester. It is the first device-only interaction spike: app selection, UI inspection, and a user-requested label-based tap. It does not yet record/replay journeys, take screenshots, run exploratory AI, detect crashes comprehensively, or generate formal reports.
 
-Android restricts cross-app control. The user must explicitly enable the ScanBug Accessibility Service in Android Settings. Only UI exposed by the target app is discoverable; custom-drawn controls, protected screens, and unlabeled elements may not work. The overlay is visible to the user and scoped to the selected target package. This app does not read target-app private files, memory, credentials, or source code. Test only apps you own or are authorized to test. Never automate payments, transfers, deletion, or other destructive actions.
+Android restricts cross-app control. The user must explicitly enable the ScanBug Accessibility Service in Android Settings. Only UI exposed by the target app is discoverable; custom-drawn controls, protected screens, and unlabeled elements may not work. The overlay is visible to the user, scoped to the selected target package, and includes a Stop action that ends the selected test session. This app does not read target-app private files, memory, credentials, or source code. Test only apps you own or are authorized to test. Never automate payments, transfers, deletion, or other destructive actions.
 
 ## Build with Android Studio
 
