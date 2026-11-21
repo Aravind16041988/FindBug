@@ -39,7 +39,8 @@ class ScanBugAccessibilityService : AccessibilityService() {
         val bounds: String,
         var expected: String = "",
         var actual: String = "",
-        var result: String = "NOT RUN"
+        var result: String = "NOT RUN",
+        var replayed: Boolean = false
     )
     private var skippedSensitiveSteps = 0
     private var replayIndex = 0
@@ -141,6 +142,11 @@ class ScanBugAccessibilityService : AccessibilityService() {
             text = "Load saved"
             isAllCaps = false
             setOnClickListener { loadSavedTestCase() }
+        })
+        caseActions.addView(Button(this).apply {
+            text = "Check expected text"
+            isAllCaps = false
+            setOnClickListener { runVisibleTextAssertions() }
         })
         container.addView(caseActions)
 
@@ -423,6 +429,51 @@ class ScanBugAccessibilityService : AccessibilityService() {
             if (found != null) return found
         }
         return null
+    }
+
+    private fun runVisibleTextAssertions() {
+        if (isRecording) {
+            statusText?.text = "Stop recording before running checks."
+            return
+        }
+        val pending = recordedSteps.filter { it.expected.isNotBlank() }
+        if (pending.isEmpty()) {
+            statusText?.text = "Add expected text in Review assertions first."
+            return
+        }
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val root = targetRoot()
+        if (root == null || root.packageName?.toString() != targetPackage) {
+            root?.recycle()
+            statusText?.text = "Selected target screen is not active. No checks were run."
+            return
+        }
+        val visibleText = mutableListOf<String>()
+        collectSafeVisibleText(root, visibleText, 0)
+        root.recycle()
+        var passed = 0
+        var failed = 0
+        pending.forEach { step ->
+            val found = visibleText.any { it.contains(step.expected.trim(), ignoreCase = true) }
+            step.result = if (found) "PASS" else "FAIL"
+            step.actual = if (found) "Expected text found on current screen" else "Expected text not found on current screen"
+            if (found) passed++ else failed++
+        }
+        inventoryText?.text = renderTestCase()
+        statusText?.text = "Visible-text checks: $passed PASS, $failed FAIL. This checks only current screen text, not business outcomes."
+    }
+
+    private fun collectSafeVisibleText(node: AccessibilityNodeInfo, output: MutableList<String>, depth: Int) {
+        if (depth > MAX_DEPTH || output.size >= MAX_CONTROLS * 5) return
+        if (node.isVisibleToUser && !node.isEditable && !node.isPassword) {
+            val label = nodeLabel(node).trim()
+            if (label.isNotBlank()) output.add(label)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectSafeVisibleText(child, output, depth + 1)
+            child.recycle()
+        }
     }
 
     private fun reviewAssertions() {
