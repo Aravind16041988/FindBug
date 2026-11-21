@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.View
+import android.view.MotionEvent
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -33,6 +34,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private var inventoryText: TextView? = null
     private var recordingText: TextView? = null
     private var highlightView: View? = null
+    private var recordingChip: TextView? = null
+    private var isRecordingPaused = false
+    private var panelMinimizedForRecording = false
     private var latestReport: String = ""
     private var isRecording = false
     private val recordedSteps = mutableListOf<RecordedStep>()
@@ -127,6 +131,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         action(if (isRecording) "Stop recording" else "Start recording", {
             if (isRecording) stopRecording() else startRecording()
         }, true)
+        if (isRecording) action(if (isRecordingPaused) "Resume recording" else "Pause recording", { if (isRecordingPaused) resumeRecording() else pauseRecording() })
         action("Share test flow", { shareTestFlow() })
         action("Review assertions", { reviewAssertions() })
         action("Save / load test case", { showTestCaseActions() })
@@ -189,15 +194,131 @@ class ScanBugAccessibilityService : AccessibilityService() {
         replayIndex = 0
         skippedSensitiveSteps = 0
         isRecording = true
+        isRecordingPaused = false
         updateRecordingUi()
-        statusText?.text = "Recording started. Tap controls in the selected app; captured actions will be highlighted."
+        statusText?.text = "Recording started. ScanBug is minimised; use the target app normally."
+        panelMinimizedForRecording = true
+        removeFloatingPanel()
+        showRecordingChip()
+    }
+
+    private fun pauseRecording() {
+        if (!isRecording) return
+        isRecordingPaused = true
+        clearTapHighlight()
+        updateRecordingUi()
+    }
+
+    private fun resumeRecording() {
+        if (!isRecording) return
+        isRecordingPaused = false
+        updateRecordingUi()
+    }
+
+    private fun showRecordingChip() {
+        if (recordingChip != null) return
+        val chip = TextView(this).apply {
+            text = "● REC  ·  0"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFFFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            background = GradientDrawable().apply {
+                setColor(0xFFD45F3C.toInt())
+                cornerRadius = dp(24).toFloat()
+                setStroke(dp(1), 0xFFFFD6C8.toInt())
+            }
+            elevation = dp(8).toFloat()
+            setOnClickListener {
+                removeRecordingChip()
+                panelMinimizedForRecording = false
+                showFloatingPanel()
+            }
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, dp(46),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(12)
+            y = dp(90)
+        }
+        chip.setOnTouchListener(object : View.OnTouchListener {
+            private var downX = 0f
+            private var downY = 0f
+            private var startX = 0
+            private var startY = 0
+            private var dragged = false
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = event.rawX
+                        downY = event.rawY
+                        startX = params.x
+                        startY = params.y
+                        dragged = false
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - downX).toInt()
+                        val dy = (event.rawY - downY).toInt()
+                        if (kotlin.math.abs(dx) > dp(5) || kotlin.math.abs(dy) > dp(5)) dragged = true
+                        if (dragged) {
+                            params.x = (startX - dx).coerceAtLeast(0)
+                            params.y = (startY + dy).coerceAtLeast(dp(24))
+                            runCatching { windowManager?.updateViewLayout(chip, params) }
+                        }
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!dragged) v.performClick()
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+        runCatching {
+            windowManager?.addView(chip, params)
+            recordingChip = chip
+            updateRecordingChip()
+        }.onFailure {
+            Toast.makeText(this, "Could not minimise ScanBug: " + it.message, Toast.LENGTH_LONG).show()
+            panelMinimizedForRecording = false
+            showFloatingPanel()
+        }
+    }
+
+    private fun updateRecordingChip() {
+        recordingChip?.apply {
+            text = if (isRecordingPaused) "Ⅱ PAUSED  ·  " + recordedSteps.size else "● REC  ·  " + recordedSteps.size
+            background = GradientDrawable().apply {
+                setColor(if (isRecordingPaused) 0xFF6D6862.toInt() else 0xFFD45F3C.toInt())
+                cornerRadius = dp(24).toFloat()
+                setStroke(dp(1), 0xFFFFD6C8.toInt())
+            }
+        }
+    }
+
+    private fun removeRecordingChip() {
+        recordingChip?.let { runCatching { windowManager?.removeView(it) } }
+        recordingChip = null
     }
 
     private fun updateRecordingUi() {
         recordingText?.apply {
-            text = if (isRecording) "● RECORDING  ·  ${recordedSteps.size} actions" else "○ READY  ·  ${recordedSteps.size} actions captured"
+            text = if (isRecording) {
+                if (isRecordingPaused) "Ⅱ PAUSED  ·  ${recordedSteps.size} actions"
+                else "● RECORDING  ·  ${recordedSteps.size} actions"
+            } else "○ READY  ·  ${recordedSteps.size} actions captured"
             setTextColor(if (isRecording) 0xFFB8422B.toInt() else 0xFF68635C.toInt())
         }
+        updateRecordingChip()
     }
 
     private fun showTapHighlight(bounds: Rect) {
@@ -265,17 +386,17 @@ class ScanBugAccessibilityService : AccessibilityService() {
             return
         }
         val eventPackage = event.packageName?.toString()
-        if (isRecording && eventPackage == selectedPackage &&
+        if (isRecording && !isRecordingPaused && eventPackage == selectedPackage &&
             event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
             recordManualTap(event, selectedPackage)
         }
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (eventPackage == selectedPackage) showFloatingPanel()
+            if (eventPackage == selectedPackage) { if (isRecording && panelMinimizedForRecording) showRecordingChip() else showFloatingPanel() }
             else if (!eventPackage.isNullOrBlank()) removeFloatingPanel()
             return
         }
-        if (eventPackage == selectedPackage) showFloatingPanel()
+        if (eventPackage == selectedPackage) { if (isRecording && panelMinimizedForRecording) showRecordingChip() else showFloatingPanel() }
     }
 
     private fun recordManualTap(event: AccessibilityEvent, selectedPackage: String) {
@@ -345,6 +466,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     private fun stopRecording() {
         isRecording = false
+        isRecordingPaused = false
+        panelMinimizedForRecording = false
+        removeRecordingChip()
         updateRecordingUi()
         clearTapHighlight()
         inventoryText?.text = if (recordedSteps.isEmpty()) {
@@ -356,6 +480,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
                     " sensitive/destructive action(s) omitted." else ""
         }
         statusText?.text = "Recording stopped. ${recordedSteps.size} actions captured; ScanBug did not execute any actions."
+        showFloatingPanel()
     }
 
     private fun shareTestFlow() {
@@ -952,6 +1077,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         clearTapHighlight()
+        removeRecordingChip()
         removeFloatingPanel()
         super.onDestroy()
     }
