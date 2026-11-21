@@ -61,9 +61,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
             }
         })
         actions.addView(Button(this).apply {
-            text = "Hide"
+            text = "Stop"
             isAllCaps = false
-            setOnClickListener { removeFloatingPanel() }
+            setOnClickListener {\n                prefs.edit().remove(KEY_TARGET_PACKAGE).apply()\n                removeFloatingPanel()\n            }
         })
         container.addView(actions)
         statusText = TextView(this).apply {
