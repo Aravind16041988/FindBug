@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">ScanBug</string>
-    <string name="accessibility_description">Read-only UI inspection for an app explicitly selected by the user. Displays accessible control labels and types locally. Does not click, type, scroll, take screenshots, save inspected screen content, or transmit it.</string>
+    <string name="accessibility_description">Inspects accessible UI metadata for an app explicitly selected by the user. Supports user-approved single-step replay. Does not enter text or transmit inspected content. Editable values and passwords are excluded.</string>
 </resources>
