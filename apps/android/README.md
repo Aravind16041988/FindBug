@@ -1,6 +1,6 @@
 # ScanBug Android — read-only UI explorer POC
 
-A native Kotlin Android companion to ScanBug. It can inspect the accessibility tree exposed by a user-selected installed app directly on the phone.
+A native Kotlin Android companion to ScanBug. It inspects the accessibility tree exposed by a user-selected installed app directly on the phone.
 
 ## Implemented
 
@@ -8,18 +8,19 @@ A native Kotlin Android companion to ScanBug. It can inspect the accessibility t
 - Opens a user-selected app and scopes the ScanBug session to that package.
 - Uses Android Accessibility Service, enabled explicitly by the user, to inspect the selected app's exposed UI tree.
 - Shows a visible ScanBug overlay only while the selected target app is active.
-- **Explore screen** lists visible, enabled clickable and editable controls with their accessible labels and control types.
-- Password values and editable field contents are never read for display or stored.
+- **Explore screen** lists visible, enabled clickable and editable controls with accessible labels and control types.
+- Password values and editable field contents are not read for display.
 - No screen snapshot, target-app text, or UI inventory is persisted.
 - The overlay provides only **Explore screen** and **Stop**. There is no tap, text-entry, scroll, gesture, or replay feature.
+- A prominent in-app Accessibility disclosure appears before the user is sent to Android Accessibility Settings. The user must affirmatively accept; declining does not enable the service.
 
-## Safety and privacy boundaries
+## Accessibility disclosure and privacy
 
-This build is intentionally read-only. ScanBug does not invoke click actions, enter text, perform gestures, or automatically navigate the target app. Any interaction must be performed manually by the user in the target app.
+The Accessibility Service can inspect UI content exposed by the selected app while the service is enabled. This is inherently sensitive access. ScanBug displays accessible labels/control types locally and does not save inspected screen content or transmit it. Editable field values and password values are excluded. The app's disclosure explains the access and use before asking the user to enable the service.
 
-The Accessibility Service can inspect UI content exposed by the selected app while the service is enabled. This is inherently sensitive Android access even though this POC does not store screen contents or transmit them. Android/Google Play Protect may still warn about sideloaded apps that declare an Accessibility Service; a read-only implementation does not guarantee Play Protect approval.
+Test only apps you own or are authorized to test. Do not use the POC with sensitive personal or financial apps. The user can disable the service at any time in Android Accessibility Settings.
 
-No network permission, analytics, cloud service, external AI provider, screenshots, or local UI-history storage is included. Test only apps you own or are authorized to test. Do not use the POC with sensitive personal or financial apps.
+This app is a QA/testing utility, not an accessibility tool designed to assist people with disabilities. It must not set `isAccessibilityTool=true`. For Google Play distribution, the developer must accurately complete the Accessibility API declaration, provide the required disclosure/demo evidence, and comply with the current policy. Approval is not guaranteed. A debug APK distributed outside Google Play may still trigger Play Protect warnings; this disclosure does not guarantee that warning will disappear.
 
 ## Limitations
 
@@ -32,7 +33,7 @@ This is not a complete mobile automation tester. It does not record/replay journ
 3. Allow Gradle sync to download the Android Gradle Plugin and Kotlin plugin.
 4. Connect an Android phone with USB debugging enabled, or use an emulator.
 5. Build and run the app.
-6. In ScanBug, tap **Enable ScanBug accessibility** and enable the service in Android Settings.
+6. Read the in-app Accessibility disclosure and explicitly accept before enabling the service in Android Settings.
 7. Return to ScanBug, select an app, and tap **Open selected app**.
 8. In the target app, tap **Explore screen** on the ScanBug overlay. Inspection is read-only.
-9. Tap **Stop** on the overlay or **Stop ScanBug session** in ScanBug to end the session.
+9. Tap **Stop** on the overlay or **Stop ScanBug session** in ScanBug to end the selected-app session. Disable the service in Android Settings to stop Accessibility access completely.
