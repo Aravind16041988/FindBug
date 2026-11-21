@@ -1,7 +1,10 @@
 package com.scanbug.android
 
 import android.accessibilityservice.AccessibilityService
+import android.app.AlertDialog
+import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.view.Gravity
 import android.view.WindowManager
@@ -9,23 +12,53 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.EditText
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
 /**
- * User-visible, deterministic UI inspection for the currently selected app.
- * It never taps controls automatically: every interaction requires an explicit
- * label entry and tap from the ScanBug overlay.
+ * Controlled QA companion: inventory is read-only; replay clicks require explicit per-step approval. Editable values are never read.
+ * Reports are shared only after the user explicitly taps Share inventory.
  */
 class ScanBugAccessibilityService : AccessibilityService() {
     private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
     private var windowManager: WindowManager? = null
     private var panel: LinearLayout? = null
-    private var labelInput: EditText? = null
     private var statusText: TextView? = null
     private var inventoryText: TextView? = null
+    private var latestReport: String = ""
+    private var isRecording = false
+    private val recordedSteps = mutableListOf<RecordedStep>()
+    private data class RecordedStep(
+        val action: String,
+        val controlType: String,
+        val resourceId: String,
+        val bounds: String,
+        var expected: String = "",
+        var actual: String = "",
+        var result: String = "NOT RUN",
+        var replayed: Boolean = false
+    )
+    private var skippedSensitiveSteps = 0
+    private var replayIndex = 0
+
+    private data class ControlInfo(
+        val category: String,
+        val type: String,
+        val label: String,
+        val resourceId: String,
+        val className: String,
+        val bounds: String,
+        val hierarchy: String,
+        val enabled: Boolean,
+        val clickable: Boolean,
+        val checkable: Boolean,
+        val checked: Boolean,
+        val selected: Boolean
+    )
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -40,19 +73,11 @@ class ScanBugAccessibilityService : AccessibilityService() {
             setBackgroundColor(0xEE202B3C.toInt())
         }
         container.addView(TextView(this).apply {
-            text = "SCANBUG QA • ON DEVICE"
+            text = "SCANBUG • CONTROLLED QA EXPLORER"
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
         })
-        labelInput = EditText(this).apply {
-            hint = "Accessible control label"
-            textSize = 14f
-            setSingleLine(true)
-            setTextColor(0xFFFFFFFF.toInt())
-            setHintTextColor(0xFFCCCCCC.toInt())
-        }
-        container.addView(labelInput, LinearLayout.LayoutParams(280, WindowManager.LayoutParams.WRAP_CONTENT))
 
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(Button(this).apply {
@@ -61,46 +86,114 @@ class ScanBugAccessibilityService : AccessibilityService() {
             setOnClickListener { exploreCurrentScreen() }
         })
         actions.addView(Button(this).apply {
-            text = "Tap label"
+            text = "Share inventory"
             isAllCaps = false
-            setOnClickListener {
-                val label = labelInput?.text?.toString()?.trim().orEmpty()
-                if (label.isBlank()) {
-                    labelInput?.error = "Enter a visible label"
-                } else if (isPotentiallyDestructive(label)) {
-                    statusText?.text = "Blocked for safety: '$label' may perform a sensitive action."
-                } else {
-                    val ok = tapVisibleLabel(label)
-                    statusText?.text = if (ok) "Tapped: $label" else "No exact, enabled clickable match found."
-                }
-            }
+            setOnClickListener { shareInventory() }
         })
         actions.addView(Button(this).apply {
             text = "Stop"
             isAllCaps = false
             setOnClickListener {
                 prefs.edit().remove(KEY_TARGET_PACKAGE).apply()
+                isRecording = false
+                recordedSteps.clear()
+                latestReport = ""
                 removeFloatingPanel()
             }
         })
         container.addView(actions)
 
+        val recorderActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        recorderActions.addView(Button(this).apply {
+            text = "Start recording"
+            isAllCaps = false
+            setOnClickListener {
+                recordedSteps.clear()
+                replayIndex = 0
+                skippedSensitiveSteps = 0
+                isRecording = true
+                statusText?.text = "Recording manual taps. ScanBug will not perform actions."
+            }
+        })
+        recorderActions.addView(Button(this).apply {
+            text = "Stop recording"
+            isAllCaps = false
+            setOnClickListener { stopRecording() }
+        })
+        recorderActions.addView(Button(this).apply {
+            text = "Share test flow"
+            isAllCaps = false
+            setOnClickListener { shareTestFlow() }
+        })
+        container.addView(recorderActions)
+
+        val caseActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        caseActions.addView(Button(this).apply {
+            text = "Review assertions"
+            isAllCaps = false
+            setOnClickListener { reviewAssertions() }
+        })
+        caseActions.addView(Button(this).apply {
+            text = "Save test case"
+            isAllCaps = false
+            setOnClickListener { saveReusableTestCase() }
+        })
+        caseActions.addView(Button(this).apply {
+            text = "Load saved"
+            isAllCaps = false
+            setOnClickListener { loadSavedTestCase() }
+        })
+        caseActions.addView(Button(this).apply {
+            text = "Check expected text"
+            isAllCaps = false
+            setOnClickListener { runVisibleTextAssertions() }
+        })
+        container.addView(caseActions)
+
+        val replayActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        replayActions.addView(Button(this).apply {
+            text = "Replay next"
+            isAllCaps = false
+            setOnClickListener { previewNextReplayStep() }
+        })
+        replayActions.addView(Button(this).apply {
+            text = "Reset replay"
+            isAllCaps = false
+            setOnClickListener {
+                replayIndex = 0
+                statusText?.text = "Replay position reset. No actions performed."
+            }
+        })
+        container.addView(replayActions)
+
+        val historyActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        historyActions.addView(Button(this).apply {
+            text = "Save run"
+            isAllCaps = false
+            setOnClickListener { saveExecutionRun() }
+        })
+        historyActions.addView(Button(this).apply {
+            text = "History / HTML report"
+            isAllCaps = false
+            setOnClickListener { shareExecutionHistoryHtml() }
+        })
+        container.addView(historyActions)
+
+
         inventoryText = TextView(this).apply {
-            text = "Tap Explore screen to list accessible controls. No controls are tapped automatically."
+            text = "Explore lists accessible controls and metadata only. It never taps controls or enters text."
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 11f
             setPadding(0, 6, 0, 6)
         }
-        val inventoryScroll = ScrollView(this).apply {
+        container.addView(ScrollView(this).apply {
             addView(inventoryText)
             layoutParams = LinearLayout.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                260
+                WindowManager.LayoutParams.MATCH_PARENT, 340
             )
-        }
-        container.addView(inventoryScroll)
+        })
         statusText = TextView(this).apply {
-            text = "Ready — exploration is read-only until you explicitly tap a label."
+            text = "Read-only inspection. Perform actions manually in the target app."
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 11f
         }
@@ -115,7 +208,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         ).apply {
             gravity = Gravity.TOP or Gravity.END
             x = 12
-            y = 100
+            y = 80
         }
         runCatching {
             windowManager?.addView(container, params)
@@ -128,7 +221,6 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private fun removeFloatingPanel() {
         panel?.let { view -> runCatching { windowManager?.removeView(view) } }
         panel = null
-        labelInput = null
         statusText = null
         inventoryText = null
     }
@@ -149,104 +241,616 @@ class ScanBugAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (event.packageName?.toString() == packageName) return
+
         val selectedPackage = prefs.getString(KEY_TARGET_PACKAGE, null)
-        if (selectedPackage.isNullOrBlank() || event.packageName?.toString() != selectedPackage) {
+        if (selectedPackage.isNullOrBlank()) {
             removeFloatingPanel()
             return
         }
-        showFloatingPanel()
-        val root = targetRoot() ?: return
-        val lines = mutableListOf<String>()
-        collectSnapshot(root, lines, 0)
-        prefs.edit().putString(KEY_SNAPSHOT, lines.distinct().take(150).joinToString("\n").ifBlank {
-            "No accessible text or controls found on this screen."
-        }).apply()
-        root.recycle()
+        val eventPackage = event.packageName?.toString()
+
+        if (isRecording && eventPackage == selectedPackage &&
+            event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            recordManualTap(event, selectedPackage)
+        }
+
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            if (eventPackage == selectedPackage) {
+                showFloatingPanel()
+            } else if (!eventPackage.isNullOrBlank()) {
+                removeFloatingPanel()
+            }
+            return
+        }
+        if (eventPackage == selectedPackage) showFloatingPanel()
     }
 
-    private fun collectSnapshot(node: AccessibilityNodeInfo, output: MutableList<String>, depth: Int) {
-        if (depth > 14 || output.size >= 200) return
-        val label = nodeLabel(node)
-        if (label.isNotBlank()) {
-            val flags = buildList {
-                if (node.isClickable) add("clickable")
-                if (node.isEditable) add("editable")
-                if (node.isEnabled) add("enabled")
-                if (node.isScrollable) add("scrollable")
-            }.joinToString(", ")
-            output.add("${"  ".repeat(depth)}• $label" + if (flags.isNotBlank()) " [$flags]" else "")
+    private fun recordManualTap(event: AccessibilityEvent, selectedPackage: String) {
+        val source = event.source ?: return
+        try {
+            if (source.packageName?.toString() != selectedPackage) return
+            var ancestor: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(source)
+            var depth = 0
+            var blocked = false
+            while (ancestor != null && depth < 6) {
+                if (ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(ancestor))) {
+                    blocked = true
+                    break
+                }
+                val parent = ancestor.parent
+                ancestor.recycle()
+                ancestor = parent
+                depth++
+            }
+            ancestor?.recycle()
+            if (blocked) {
+                skippedSensitiveSteps++
+                return
+            }
+            val label = nodeLabel(source).ifBlank {
+                friendlyType(source, source.className?.toString().orEmpty())
+            }.replace(Regex("\\s+"), " ").take(100)
+            val className = source.className?.toString()?.substringAfterLast('.').orEmpty()
+            val resourceId = source.viewIdResourceName.orEmpty()
+            val bounds = Rect()
+            source.getBoundsInScreen(bounds)
+            val number = recordedSteps.size + 1
+            recordedSteps.add(
+                RecordedStep(
+                    action = number.toString() + ". Tap: " + label,
+                    controlType = className.ifBlank { "Unknown" },
+                    resourceId = resourceId.ifBlank { "not exposed" },
+                    bounds = bounds.flattenToString()
+                )
+            )
+            statusText?.text = "Recording manual taps: " + recordedSteps.size + " steps captured."
+        } finally {
+            source.recycle()
+        }
+    }
+
+    private fun stopRecording() {
+        isRecording = false
+        inventoryText?.text = if (recordedSteps.isEmpty()) {
+            "No manual taps recorded. Start recording, then perform actions yourself in the target app."
+        } else {
+            "RECORDED TEST FLOW — " + recordedSteps.size + " steps\n\n" +
+                recordedSteps.mapIndexed { index, step -> (index + 1).toString() + ". " + step.action + " | " + step.result }.joinToString("\n") +
+                if (skippedSensitiveSteps > 0) "\n\n" + skippedSensitiveSteps +
+                    " sensitive/destructive action(s) omitted." else ""
+        }
+        statusText?.text = "Recording stopped. ScanBug did not execute any actions."
+    }
+
+    private fun shareTestFlow() {
+        if (isRecording) {
+            statusText?.text = "Stop recording before sharing the test flow."
+            return
+        }
+        if (recordedSteps.isEmpty()) {
+            statusText?.text = "No recorded steps to share."
+            return
+        }
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val report = "ScanBug Manual Test Flow\n" +
+            "Target package: " + targetPackage + "\n" +
+            "Steps: " + recordedSteps.size + "\n" +
+            "Sensitive/destructive actions omitted: " + skippedSensitiveSteps + "\n" +
+            "Privacy: editable field values and password values are not recorded.\n" +
+            "Execution: manual user actions only; ScanBug did not replay or perform actions.\n\n" +
+            recordedSteps.mapIndexed { index, step -> formatStep(index + 1, step) }.joinToString("\n\n")
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "ScanBug Manual Test Flow")
+            putExtra(Intent.EXTRA_TEXT, report)
+        }
+        runCatching {
+            startActivity(Intent.createChooser(send, "Share ScanBug test flow").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { statusText?.text = "Could not open share sheet: " + it.message }
+    }
+
+
+    private fun previewNextReplayStep() {
+        if (isRecording) { statusText?.text = "Stop recording before replay."; return }
+        if (recordedSteps.isEmpty()) { statusText?.text = "Load or record a test case first."; return }
+        if (replayIndex >= recordedSteps.size) { statusText?.text = "Replay reached the end. Reset to start again."; return }
+        val step = recordedSteps[replayIndex]
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        if (targetPackage.isBlank()) { statusText?.text = "Select a target app first."; return }
+        if (step.resourceId.isBlank() || step.resourceId == "not exposed") {
+            statusText?.text = "This step has no stable resource ID. Replay skipped; perform it manually."
+            replayIndex++
+            return
+        }
+        if (step.result == "BLOCKED" || ScanBugSafetyPolicy.isPotentiallyDestructive(step.action)) {
+            statusText?.text = "Safety guard blocked this step. No action performed."
+            replayIndex++
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Approve one replay action?")
+            .setMessage("Target: $targetPackage\nStep ${replayIndex + 1}/${recordedSteps.size}: ${step.action}\n\nScanBug will locate the exact resource ID or accessible label and request one click only. No typing, scrolling, swiping or automatic continuation. Approve only for an authorized test app.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Approve & click once") { _, _ -> executeApprovedReplayStep(step, targetPackage) }
+            .show()
+    }
+
+    private fun executeApprovedReplayStep(step: RecordedStep, targetPackage: String) {
+        val root = targetRoot()
+        if (root == null || root.packageName?.toString() != targetPackage) {
+            root?.recycle()
+            statusText?.text = "Target app is not active. No action performed."
+            return
+        }
+        val target = findReplayTarget(root, step, 0)
+        root.recycle()
+        if (target == null) {
+            statusText?.text = "No exact enabled clickable match found. No action performed."
+            return
+        }
+        try {
+            if (target.packageName?.toString() != targetPackage || !target.isEnabled ||
+                !target.isVisibleToUser || !target.isClickable ||
+                ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(target))) {
+                statusText?.text = "Replay safety check failed. No action performed."
+                return
+            }
+            if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                step.replayed = true
+                replayIndex++
+                statusText?.text = "One click requested. Inspect the app before approving the next step."
+            } else {
+                statusText?.text = "Android declined the click. Replay stopped."
+            }
+        } finally { target.recycle() }
+    }
+
+    private fun findReplayTarget(node: AccessibilityNodeInfo, step: RecordedStep, depth: Int): AccessibilityNodeInfo? {
+        if (depth > MAX_DEPTH) return null
+        val expectedId = step.resourceId
+        val matches = expectedId.isNotBlank() &&
+            expectedId != "not exposed" &&
+            node.viewIdResourceName.orEmpty() == expectedId
+        if (matches && node.packageName?.toString() == prefs.getString(KEY_TARGET_PACKAGE, null)) {
+            var candidate: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(node)
+            var climb = 0
+            while (candidate != null && climb < 6 &&
+                !(candidate.isClickable && candidate.isEnabled && candidate.isVisibleToUser)) {
+                val parent = candidate.parent
+                candidate.recycle()
+                candidate = parent
+                climb++
+            }
+            if (candidate != null && candidate.isClickable && candidate.isEnabled && candidate.isVisibleToUser) {
+                var ancestor: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(candidate)
+                var blocked = false
+                var level = 0
+                while (ancestor != null && level < 6) {
+                    if (ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(ancestor))) blocked = true
+                    val parent = ancestor.parent
+                    ancestor.recycle()
+                    ancestor = parent
+                    level++
+                }
+                if (!blocked) return candidate
+                candidate.recycle()
+            } else candidate?.recycle()
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            collectSnapshot(child, output, depth + 1)
+            val found = findReplayTarget(child, step, depth + 1)
+            child.recycle()
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun runVisibleTextAssertions() {
+        if (isRecording) {
+            statusText?.text = "Stop recording before running checks."
+            return
+        }
+        val pending = recordedSteps.filter { it.expected.isNotBlank() }
+        if (pending.isEmpty()) {
+            statusText?.text = "Add expected text in Review assertions first."
+            return
+        }
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val root = targetRoot()
+        if (root == null || root.packageName?.toString() != targetPackage) {
+            root?.recycle()
+            statusText?.text = "Selected target screen is not active. No checks were run."
+            return
+        }
+        val visibleText = mutableListOf<String>()
+        collectSafeVisibleText(root, visibleText, 0)
+        root.recycle()
+        var passed = 0
+        var failed = 0
+        pending.forEach { step ->
+            val found = visibleText.any { it.contains(step.expected.trim(), ignoreCase = true) }
+            step.result = if (found) "PASS" else "FAIL"
+            step.actual = if (found) "Expected text found on current screen" else "Expected text not found on current screen"
+            if (found) passed++ else failed++
+        }
+        inventoryText?.text = renderTestCase()
+        statusText?.text = "Visible-text checks: $passed PASS, $failed FAIL. This checks only current screen text, not business outcomes."
+    }
+
+    private fun collectSafeVisibleText(node: AccessibilityNodeInfo, output: MutableList<String>, depth: Int) {
+        if (depth > MAX_DEPTH || output.size >= MAX_CONTROLS * 5) return
+        if (node.isVisibleToUser && !node.isEditable && !node.isPassword) {
+            val label = nodeLabel(node).trim()
+            if (label.isNotBlank()) output.add(label)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectSafeVisibleText(child, output, depth + 1)
             child.recycle()
         }
     }
 
+    private fun reviewAssertions() {
+        if (isRecording || recordedSteps.isEmpty()) {
+            statusText?.text = "Stop recording and capture steps before reviewing."
+            return
+        }
+        showAssertionEditor(0)
+    }
+
+    private fun showAssertionEditor(index: Int) {
+        if (index >= recordedSteps.size) {
+            inventoryText?.text = renderTestCase()
+            statusText?.text = "Review complete. Results are manually entered, not automatically verified."
+            return
+        }
+        val step = recordedSteps[index]
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 12, 24, 8)
+        }
+        form.addView(TextView(this).apply {
+            text = "Step " + (index + 1) + ": " + step.action + "\nControl: " + step.controlType
+        })
+        val expected = EditText(this).apply {
+            hint = "Expected result"
+            setText(step.expected)
+            minLines = 2
+        }
+        val actual = EditText(this).apply {
+            hint = "Actual result observed"
+            setText(step.actual)
+            minLines = 2
+        }
+        form.addView(expected)
+        form.addView(actual)
+        form.addView(TextView(this).apply { text = "Manual result" })
+        val group = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        listOf("NOT RUN", "PASS", "FAIL", "BLOCKED").forEach { value ->
+            group.addView(RadioButton(this).apply {
+                text = value
+                tag = value
+                isChecked = step.result == value
+            })
+        }
+        form.addView(group)
+        AlertDialog.Builder(this)
+            .setTitle("Expected result " + (index + 1) + "/" + recordedSteps.size)
+            .setView(form)
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Skip") { _, _ -> showAssertionEditor(index + 1) }
+            .setPositiveButton("Save & next") { _, _ ->
+                step.expected = expected.text.toString().trim()
+                step.actual = actual.text.toString().trim()
+                step.result = group.findViewById<RadioButton>(group.checkedRadioButtonId)
+                    ?.tag?.toString() ?: "NOT RUN"
+                showAssertionEditor(index + 1)
+            }
+            .show()
+    }
+
+    private fun formatStep(number: Int, step: RecordedStep): String {
+        return number.toString() + ". " + step.action + "\n" +
+            "   Control: " + step.controlType + " | Resource ID: " + step.resourceId +
+            " | Bounds: " + step.bounds + "\n" +
+            "   Expected: " + step.expected.ifBlank { "Not specified" } + "\n" +
+            "   Actual: " + step.actual.ifBlank { "Not entered" } + "\n" +
+            "   Result: " + step.result
+    }
+
+    private fun renderTestCase(): String {
+        return "SCANBUG TEST CASE\nTarget: " +
+            prefs.getString(KEY_TARGET_PACKAGE, "unknown") + "\nSteps: " + recordedSteps.size + "\n" +
+            "PASS: " + recordedSteps.count { it.result == "PASS" } +
+            " | FAIL: " + recordedSteps.count { it.result == "FAIL" } +
+            " | BLOCKED: " + recordedSteps.count { it.result == "BLOCKED" } +
+            " | NOT RUN: " + recordedSteps.count { it.result == "NOT RUN" } + "\n\n" +
+            recordedSteps.mapIndexed { index, step -> formatStep(index + 1, step) }.joinToString("\n\n") +
+            "\n\nResults are manually entered by the tester; ScanBug has not automatically asserted app behavior."
+    }
+
+    private fun saveReusableTestCase() {
+        if (isRecording || recordedSteps.isEmpty()) {
+            statusText?.text = "Stop recording and capture steps before saving."
+            return
+        }
+        val titleInput = EditText(this).apply {
+            hint = "Test case title"
+            setText("Manual test — " + prefs.getString(KEY_TARGET_PACKAGE, "app"))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Save reusable test case")
+            .setMessage("Saves this checklist and expected results locally on this phone.")
+            .setView(titleInput)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val json = org.json.JSONObject().apply {
+                    put("title", titleInput.text.toString().trim().ifBlank { "ScanBug test case" })
+                    put("targetPackage", prefs.getString(KEY_TARGET_PACKAGE, ""))
+                    put("steps", org.json.JSONArray().apply {
+                        recordedSteps.forEach { step ->
+                            put(org.json.JSONObject().apply {
+                                put("action", step.action)
+                                put("controlType", step.controlType)
+                                put("resourceId", step.resourceId)
+                                put("bounds", step.bounds)
+                                put("expected", step.expected)
+                                put("actual", step.actual)
+                                put("result", step.result)
+                            })
+                        }
+                    })
+                }
+                prefs.edit().putString(KEY_SAVED_TEST_CASE, json.toString()).apply()
+                inventoryText?.text = renderTestCase()
+                statusText?.text = "Test case saved locally on this phone."
+            }
+            .show()
+    }
+
+    private fun loadSavedTestCase() {
+        val raw = prefs.getString(KEY_SAVED_TEST_CASE, null)
+        if (raw.isNullOrBlank()) {
+            statusText?.text = "No saved test case on this phone."
+            return
+        }
+        runCatching {
+            val json = org.json.JSONObject(raw)
+            val steps = json.getJSONArray("steps")
+            recordedSteps.clear()
+            replayIndex = 0
+            for (i in 0 until steps.length()) {
+                val item = steps.getJSONObject(i)
+                recordedSteps.add(
+                    RecordedStep(
+                        action = item.optString("action"),
+                        controlType = item.optString("controlType"),
+                        resourceId = item.optString("resourceId"),
+                        bounds = item.optString("bounds"),
+                        expected = item.optString("expected"),
+                        actual = item.optString("actual"),
+                        result = item.optString("result", "NOT RUN")
+                    )
+                )
+            }
+            inventoryText?.text = "SAVED TEST CASE: " + json.optString("title") + "\n\n" + renderTestCase()
+            statusText?.text = "Loaded " + recordedSteps.size + " saved steps."
+        }.onFailure {
+            statusText?.text = "Could not load saved test case: " + it.message
+        }
+    }
+
+
+    private fun saveExecutionRun() {
+        if (isRecording || recordedSteps.isEmpty()) {
+            statusText?.text = "Stop recording and capture a test case before saving a run."
+            return
+        }
+        val history = runCatching { org.json.JSONArray(prefs.getString(KEY_RUN_HISTORY, "[]") ?: "[]") }
+            .getOrElse { org.json.JSONArray() }
+        val entry = org.json.JSONObject().apply {
+            put("timestamp", System.currentTimeMillis())
+            put("targetPackage", prefs.getString(KEY_TARGET_PACKAGE, "unknown"))
+            put("stepCount", recordedSteps.size)
+            put("pass", recordedSteps.count { it.result == "PASS" })
+            put("fail", recordedSteps.count { it.result == "FAIL" })
+            put("blocked", recordedSteps.count { it.result == "BLOCKED" })
+            put("notRun", recordedSteps.count { it.result == "NOT RUN" })
+            put("report", renderTestCase())
+        }
+        val updated = org.json.JSONArray().apply {
+            put(entry)
+            for (i in 0 until minOf(history.length(), 19)) put(history.getJSONObject(i))
+        }
+        prefs.edit().putString(KEY_RUN_HISTORY, updated.toString()).apply()
+        statusText?.text = "Run saved locally. History contains ${updated.length()} runs."
+    }
+
+    private fun shareExecutionHistoryHtml() {
+        val history = runCatching { org.json.JSONArray(prefs.getString(KEY_RUN_HISTORY, "[]") ?: "[]") }
+            .getOrElse { org.json.JSONArray() }
+        if (history.length() == 0) {
+            statusText?.text = "No saved execution history. Save a run first."
+            return
+        }
+        fun escapeHtml(value: String): String = value.replace("&", "&amp;")
+            .replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+        val rows = (0 until history.length()).joinToString("") { index ->
+            val item = history.getJSONObject(index)
+            val date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                .format(java.util.Date(item.optLong("timestamp")))
+            "<section><h2>Run ${index + 1} — ${escapeHtml(date)}</h2>" +
+                "<p><b>Target:</b> ${escapeHtml(item.optString("targetPackage"))} | " +
+                "<b>Steps:</b> ${item.optInt("stepCount")} | PASS: ${item.optInt("pass")} | " +
+                "FAIL: ${item.optInt("fail")} | BLOCKED: ${item.optInt("blocked")} | " +
+                "NOT RUN: ${item.optInt("notRun")}</p><pre>${escapeHtml(item.optString("report"))}</pre></section>"
+        }
+        val html = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">" +
+            "<title>ScanBug execution history</title><style>body{font:14px sans-serif;margin:24px;color:#222}" +
+            "section{border:1px solid #bbb;padding:16px;margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}" +
+            "</style></head><body><h1>ScanBug execution history</h1>" +
+            "<p>Generated locally on request. Editable field contents and passwords are excluded.</p>" +
+            rows + "</body></html>"
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/html"
+            putExtra(Intent.EXTRA_SUBJECT, "ScanBug execution history")
+            putExtra(Intent.EXTRA_TEXT, html)
+        }
+        runCatching { startActivity(Intent.createChooser(send, "Share ScanBug HTML report").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .onFailure { statusText?.text = "Could not open report share sheet: " + it.message }
+    }
+
     private fun exploreCurrentScreen() {
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
         val root = targetRoot()
         if (root == null) {
             statusText?.text = "Target screen is not available. Reopen the selected app."
             return
         }
-        val controls = mutableListOf<String>()
-        collectControls(root, controls, 0)
+
+        val controls = mutableListOf<ControlInfo>()
+        collectControls(root, controls, 0, "root")
         root.recycle()
+
+        latestReport = buildReport(targetPackage, controls)
         inventoryText?.text = if (controls.isEmpty()) {
-            "No labelled interactive controls were exposed by this screen. Custom-drawn or unlabeled controls may not be discoverable."
+            "No accessible controls found. Custom-drawn, protected or unlabeled controls may not be exposed."
         } else {
-            "SCREEN INVENTORY — ${controls.size} labelled controls\n\n" +
-                controls.take(MAX_CONTROLS).joinToString("\n") +
-                if (controls.size > MAX_CONTROLS) "\n\nShowing first $MAX_CONTROLS controls." else ""
+            renderInventory(controls)
         }
-        statusText?.text = "Read-only scan complete. Review a label, then tap it manually if safe."
+        statusText?.text = "Scan complete: ${controls.size} controls. Read-only; nothing was tapped or changed."
     }
 
-    private fun collectControls(node: AccessibilityNodeInfo, output: MutableList<String>, depth: Int) {
-        if (depth > 16 || output.size >= 100) return
-        val label = nodeLabel(node)
-        if (node.isVisibleToUser && node.isEnabled && (node.isClickable || node.isEditable)) {
-            val type = if (node.isEditable) "INPUT" else "BUTTON"
-            val safeNote = if (isPotentiallyDestructive(label)) " [SENSITIVE — NOT TO BE TAPPED]" else ""
-            output.add("${output.size + 1}. [$type] ${label.ifBlank { "(unlabelled control)" }}$safeNote")
+    private fun collectControls(
+        node: AccessibilityNodeInfo,
+        output: MutableList<ControlInfo>,
+        depth: Int,
+        path: String
+    ) {
+        if (depth > MAX_DEPTH || output.size >= MAX_CONTROLS) return
+
+        val interactive = node.isClickable || node.isEditable || node.isCheckable ||
+            node.isLongClickable || node.isScrollable
+        if (node.isVisibleToUser && interactive) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            val className = node.className?.toString().orEmpty()
+            val category = categoryFor(node, className)
+            output.add(
+                ControlInfo(
+                    category = category,
+                    type = friendlyType(node, className),
+                    label = nodeLabel(node).ifBlank { friendlyType(node, className) },
+                    resourceId = node.viewIdResourceName.orEmpty(),
+                    className = className.substringAfterLast('.'),
+                    bounds = "${bounds.left},${bounds.top} - ${bounds.right},${bounds.bottom}",
+                    hierarchy = path,
+                    enabled = node.isEnabled,
+                    clickable = node.isClickable,
+                    checkable = node.isCheckable,
+                    checked = node.isChecked,
+                    selected = node.isSelected
+                )
+            )
         }
+
         for (i in 0 until node.childCount) {
+            if (output.size >= MAX_CONTROLS) break
             val child = node.getChild(i) ?: continue
-            collectControls(child, output, depth + 1)
+            collectControls(child, output, depth + 1, "$path/$i")
             child.recycle()
         }
     }
 
+    private fun categoryFor(node: AccessibilityNodeInfo, className: String): String {
+        val lower = className.lowercase()
+        return when {
+            node.isEditable -> "INPUTS"
+            lower.contains("tab") -> "TABS"
+            node.isCheckable || lower.contains("switch") || lower.contains("checkbox") || lower.contains("radio") -> "SELECTIONS"
+            node.isClickable || node.isLongClickable -> "BUTTONS & ACTIONS"
+            else -> "OTHER CONTROLS"
+        }
+    }
+
+    private fun friendlyType(node: AccessibilityNodeInfo, className: String): String {
+        val lower = className.lowercase()
+        return when {
+            node.isPassword -> "Password field (value hidden)"
+            node.isEditable -> "Text input"
+            lower.contains("image") -> "Image"
+            lower.contains("tab") -> "Tab"
+            lower.contains("switch") -> "Switch"
+            lower.contains("checkbox") -> "Checkbox"
+            lower.contains("radio") -> "Radio button"
+            lower.contains("button") -> "Button"
+            lower.contains("textview") -> "Text"
+            lower.contains("edittext") -> "Text input"
+            else -> className.substringAfterLast('.').ifBlank { "Control" }
+        }
+    }
+
     private fun nodeLabel(node: AccessibilityNodeInfo): String {
-        val text = node.text?.toString()?.trim().orEmpty()
         val description = node.contentDescription?.toString()?.trim().orEmpty()
+        // Never read or expose editable field contents or password values.
+        if (node.isPassword) return if (description.isNotBlank()) description else "Password field"
+        if (node.isEditable) {
+            val hint = node.hintText?.toString()?.trim().orEmpty()
+            return listOf(description, hint).filter { it.isNotBlank() }.distinct().joinToString(" / ")
+        }
+        val text = node.text?.toString()?.trim().orEmpty()
         return listOf(text, description).filter { it.isNotBlank() }.distinct().joinToString(" / ")
     }
 
-    private fun isPotentiallyDestructive(label: String): Boolean {
-        val normalized = label.lowercase()
-        return BLOCKED_TERMS.any { term -> normalized.contains(term) }
+    private fun renderInventory(controls: List<ControlInfo>): String {
+        val result = StringBuilder("READ-ONLY INVENTORY — ${controls.size} controls\n")
+        val groups = listOf("INPUTS", "BUTTONS & ACTIONS", "TABS", "SELECTIONS", "OTHER CONTROLS")
+        for (group in groups) {
+            val entries = controls.filter { it.category == group }
+            if (entries.isEmpty()) continue
+            result.append("\n").append(group).append(" (").append(entries.size).append(")\n")
+            entries.forEachIndexed { index, item ->
+                result.append("\n").append(index + 1).append(". ").append(item.label)
+                result.append("\n   Type: ").append(item.type)
+                result.append("\n   Resource ID: ").append(item.resourceId.ifBlank { "not exposed" })
+                result.append("\n   Class: ").append(item.className.ifBlank { "not exposed" })
+                result.append("\n   Bounds: ").append(item.bounds)
+                result.append("\n   Hierarchy: ").append(item.hierarchy)
+                result.append("\n   State: ").append(
+                    listOf(
+                        if (item.enabled) "enabled" else "disabled",
+                        if (item.clickable) "clickable" else null,
+                        if (item.checkable) if (item.checked) "checked" else "unchecked" else null,
+                        if (item.selected) "selected" else null
+                    ).filterNotNull().joinToString(", ")
+                ).append("\n")
+            }
+        }
+        if (controls.size >= MAX_CONTROLS) {
+            result.append("\nSafety limit: first $MAX_CONTROLS controls shown.")
+        }
+        return result.toString()
     }
 
-    private fun tapVisibleLabel(requested: String): Boolean {
-        val root = targetRoot() ?: return false
-        val matches = root.findAccessibilityNodeInfosByText(requested)
-        val candidate = matches.firstOrNull {
-            it.isVisibleToUser && it.isEnabled &&
-                (it.text?.toString()?.equals(requested, true) == true ||
-                 it.contentDescription?.toString()?.equals(requested, true) == true)
+    private fun buildReport(targetPackage: String, controls: List<ControlInfo>): String {
+        return "ScanBug UI Inventory\nTarget package: $targetPackage\nControls: ${controls.size}\n" +
+            "Privacy: editable values/password values excluded; report generated locally on user request.\n\n" +
+            renderInventory(controls)
+    }
+
+    private fun shareInventory() {
+        if (latestReport.isBlank()) {
+            statusText?.text = "Explore the screen first. No inventory is ready to share."
+            return
         }
-        var actionNode = candidate
-        var depth = 0
-        while (actionNode != null && !actionNode.isClickable && depth < 5) {
-            actionNode = actionNode.parent
-            depth++
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "ScanBug UI Inventory")
+            putExtra(Intent.EXTRA_TEXT, latestReport)
         }
-        val success = actionNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-        if (actionNode !== candidate) actionNode?.recycle()
-        matches.forEach { runCatching { it.recycle() } }
-        root.recycle()
-        return success
+        val chooser = Intent.createChooser(send, "Share ScanBug inventory").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(chooser) }
+            .onFailure { statusText?.text = "Could not open share sheet: ${it.message}" }
     }
 
     override fun onInterrupt() = Unit
@@ -258,13 +862,10 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     companion object {
         const val PREFS = "scanbug_local"
-        const val KEY_SNAPSHOT = "latest_accessible_snapshot"
         const val KEY_TARGET_PACKAGE = "selected_target_package"
-        private const val MAX_CONTROLS = 40
-        private val BLOCKED_TERMS = listOf(
-            "pay", "payment", "transfer", "delete", "remove", "purchase", "buy",
-            "logout", "log out", "sign out", "confirm", "submit", "send",
-            "withdraw", "close account", "place order"
-        )
+        const val KEY_SAVED_TEST_CASE = "saved_reusable_test_case"
+        private const val KEY_RUN_HISTORY = "local_execution_history"
+        private const val MAX_CONTROLS = 100
+        private const val MAX_DEPTH = 20
     }
 }
