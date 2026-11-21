@@ -22,12 +22,11 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        showFloatingPanel()
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
     }
 
     private fun showFloatingPanel() {
         if (panel != null) return
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(14, 10, 14, 10)
@@ -95,10 +94,18 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private fun removeFloatingPanel() {
         panel?.let { view -> runCatching { windowManager?.removeView(view) } }
         panel = null
+        labelInput = null
+        statusText = null
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        val selectedPackage = prefs.getString(KEY_TARGET_PACKAGE, null)
+        if (selectedPackage.isNullOrBlank() || event.packageName?.toString() != selectedPackage) {
+            removeFloatingPanel()
+            return
+        }
+        showFloatingPanel()
         val root = rootInActiveWindow ?: return
         val lines = mutableListOf<String>()
         collectVisibleNodes(root, lines, 0)
@@ -131,20 +138,19 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private fun tapVisibleLabel(requested: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val matches = root.findAccessibilityNodeInfosByText(requested)
-        val exact = matches.firstOrNull {
+        val candidate = matches.firstOrNull {
             it.isVisibleToUser && it.isEnabled &&
                 (it.text?.toString()?.equals(requested, true) == true ||
                  it.contentDescription?.toString()?.equals(requested, true) == true)
-        }
-        val candidate = exact ?: matches.firstOrNull { it.isVisibleToUser && it.isEnabled }
-        var clickable: AccessibilityNodeInfo? = candidate
+        } ?: matches.firstOrNull { it.isVisibleToUser && it.isEnabled }
+        var actionNode = candidate
         var depth = 0
-        while (clickable != null && !clickable.isClickable && depth < 5) {
-            clickable = clickable.parent
+        while (actionNode != null && !actionNode.isClickable && depth < 5) {
+            actionNode = actionNode.parent
             depth++
         }
-        val success = clickable?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-        clickable?.recycle()
+        val success = actionNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        if (actionNode !== candidate) actionNode?.recycle()
         matches.forEach { runCatching { it.recycle() } }
         root.recycle()
         return success
@@ -160,5 +166,6 @@ class ScanBugAccessibilityService : AccessibilityService() {
     companion object {
         const val PREFS = "scanbug_local"
         const val KEY_SNAPSHOT = "latest_accessible_snapshot"
+        const val KEY_TARGET_PACKAGE = "selected_target_package"
     }
 }
