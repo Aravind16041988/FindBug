@@ -39,6 +39,11 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private var recordingChip: TextView? = null
     private var isRecordingPaused = false
     private var panelMinimizedForRecording = false
+    private var isAiTesting = false
+    private var aiActionCount = 0
+    private val aiHandler = Handler(Looper.getMainLooper())
+    private val aiVisited = mutableSetOf<String>()
+    private val aiResults = mutableListOf<String>()
     private var latestReport: String = ""
     private var isRecording = false
     private val recordedSteps = mutableListOf<RecordedStep>()
@@ -127,8 +132,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
                 ).apply { bottomMargin = dp(6) }
             })
         }
+        action(if (isAiTesting) "Stop AI testing" else "Run AI testing", { if (isAiTesting) stopAiTesting("Stopped by tester.") else startAiTesting() }, true)
         action("Explore screen", { exploreCurrentScreen() })
-        action("AI test suggestions", { showAiSuggestions() }, true)
+        action("AI test suggestions", { showAiSuggestions() })
         action("Share inventory", { shareInventory() })
         action(if (isRecording) "Stop recording" else "Start recording", {
             if (isRecording) stopRecording() else startRecording()
@@ -220,7 +226,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private fun showRecordingChip() {
         if (recordingChip != null) return
         val chip = TextView(this).apply {
-            text = "● REC  ·  0"
+            text = if (isAiTesting) "✦ AI TEST  ·  0" else "● REC  ·  0"
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(0xFFFFFFFF.toInt())
@@ -298,9 +304,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     private fun updateRecordingChip() {
         recordingChip?.apply {
-            text = if (isRecordingPaused) "Ⅱ PAUSED  ·  " + recordedSteps.size else "● REC  ·  " + recordedSteps.size
+            text = when { isAiTesting -> "✦ AI TEST  ·  " + aiActionCount; isRecordingPaused -> "Ⅱ PAUSED  ·  " + recordedSteps.size; else -> "● REC  ·  " + recordedSteps.size }
             background = GradientDrawable().apply {
-                setColor(if (isRecordingPaused) 0xFF6D6862.toInt() else 0xFFD45F3C.toInt())
+                setColor(if (isAiTesting) 0xFF315F8C.toInt() else if (isRecordingPaused) 0xFF6D6862.toInt() else 0xFFD45F3C.toInt())
                 cornerRadius = dp(24).toFloat()
                 setStroke(dp(1), 0xFFFFD6C8.toInt())
             }
@@ -397,7 +403,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         }
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (eventPackage == selectedPackage) { if (isRecording && panelMinimizedForRecording) showRecordingChip() else showFloatingPanel() }
+            if (eventPackage == selectedPackage) { if ((isRecording && panelMinimizedForRecording) || isAiTesting) showRecordingChip() else showFloatingPanel() }
             else if (!eventPackage.isNullOrBlank()) removeFloatingPanel()
             return
         }
@@ -517,7 +523,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
 
     private fun previewNextReplayStep() {
-        if (isRecording) { statusText?.text = "Stop recording before replay."; return }
+        if (isRecording || isAiTesting) { statusText?.text = "Stop the current run before replay."; return }
         if (recordedSteps.isEmpty()) { statusText?.text = "Load or record a test case first."; return }
         if (replayIndex >= recordedSteps.size) { statusText?.text = "Replay reached the end. Reset to start again."; return }
         val step = recordedSteps[replayIndex]
@@ -866,6 +872,127 @@ class ScanBugAccessibilityService : AccessibilityService() {
             .onFailure { statusText?.text = "Could not open report share sheet: " + it.message }
     }
 
+    private fun startAiTesting() {
+        if (isRecording) {
+            statusText?.text = "Stop manual recording before starting AI testing."
+            return
+        }
+        val target = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val root = targetRoot()
+        if (target.isBlank() || root == null || root.packageName?.toString() != target) {
+            root?.recycle()
+            statusText?.text = "Open the selected target app first."
+            return
+        }
+        root.recycle()
+        isAiTesting = true
+        aiActionCount = 0
+        aiVisited.clear()
+        aiResults.clear()
+        panelMinimizedForRecording = true
+        statusText?.text = "AI runtime started. Exploring safe, labelled navigation controls only."
+        removeFloatingPanel()
+        showRecordingChip()
+        aiHandler.post { runAiTestingStep() }
+    }
+
+    private fun stopAiTesting(reason: String) {
+        aiHandler.removeCallbacksAndMessages(null)
+        isAiTesting = false
+        panelMinimizedForRecording = false
+        removeRecordingChip()
+        clearTapHighlight()
+        showFloatingPanel()
+        statusText?.text = "AI testing finished: $aiActionCount safe actions. $reason"
+        inventoryText?.text = buildString {
+            append("AI TEST RUN · ").append(aiActionCount).append(" actions\n")
+            if (aiResults.isEmpty()) append("No safe, labelled navigation controls were available.\n")
+            aiResults.forEachIndexed { i, result -> append(i + 1).append(". ").append(result).append("\n") }
+            append("\nOnly low-risk navigation was automated. Inputs, authentication, transactions and destructive actions were not executed.")
+        }
+    }
+
+    private fun runAiTestingStep() {
+        if (!isAiTesting) return
+        val target = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val root = targetRoot()
+        if (root == null || root.packageName?.toString() != target) {
+            root?.recycle()
+            stopAiTesting("Target app screen unavailable; tester intervention is needed.")
+            return
+        }
+        val candidate = findNextSafeCandidate(root, "root")
+        root.recycle()
+        if (candidate == null || aiActionCount >= 8) {
+            stopAiTesting(if (aiActionCount >= 8) "Reached the safe exploration limit." else "No more safe navigation controls found.")
+            return
+        }
+        val liveRoot = targetRoot()
+        if (liveRoot == null || liveRoot.packageName?.toString() != target) {
+            liveRoot?.recycle()
+            stopAiTesting("Target app changed before action.")
+            return
+        }
+        val clicked = performCandidateClick(liveRoot, "root", candidate)
+        liveRoot.recycle()
+        if (!clicked) {
+            aiVisited.add(candidate.key)
+            aiHandler.postDelayed({ runAiTestingStep() }, 250)
+            return
+        }
+        aiVisited.add(candidate.key)
+        aiActionCount++
+        aiResults.add("Tapped '" + candidate.label + "' · " + candidate.resourceId)
+        updateRecordingChip()
+        statusText?.text = "AI testing: $aiActionCount safe actions explored."
+        aiHandler.postDelayed({ runAiTestingStep() }, 900)
+    }
+
+    private data class AiCandidate(val key: String, val label: String, val resourceId: String)
+
+    private fun findNextSafeCandidate(node: AccessibilityNodeInfo, path: String): AiCandidate? {
+        if (node.packageName?.toString() != prefs.getString(KEY_TARGET_PACKAGE, null)) return null
+        val label = nodeLabel(node).take(100)
+        val className = node.className?.toString().orEmpty()
+        val resourceId = node.viewIdResourceName.orEmpty()
+        val key = if (resourceId.isNotBlank()) resourceId else "$path|$className|$label"
+        val safeLabel = label.isNotBlank() && !node.isEditable && !node.isPassword &&
+            !node.isCheckable && !node.isLongClickable && !node.isScrollable &&
+            node.isVisibleToUser && node.isEnabled && node.isClickable &&
+            !ScanBugSafetyPolicy.isPotentiallyDestructive(label) &&
+            !Regex("(?i)\b(login|sign in|sign up|log out|logout|account|profile|checkout|cart|book|reserve|call|email|share|settings|permission|install|uninstall)\b").containsMatchIn(label) &&
+            Regex("(?i)\b(home|back|menu|tab|search|filter|category|details|view|expand|collapse|next|previous|more|close panel)\b").containsMatchIn(label)
+        if (safeLabel && !aiVisited.contains(key)) return AiCandidate(key, label, resourceId)
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findNextSafeCandidate(child, "$path/$i")
+            child.recycle()
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun performCandidateClick(node: AccessibilityNodeInfo, path: String, candidate: AiCandidate): Boolean {
+        if (node.packageName?.toString() != prefs.getString(KEY_TARGET_PACKAGE, null)) return false
+        val label = nodeLabel(node).take(100)
+        val resourceId = node.viewIdResourceName.orEmpty()
+        val key = if (resourceId.isNotBlank()) resourceId else "$path|" + node.className?.toString().orEmpty() + "|$label"
+        if (key == candidate.key && node.isVisibleToUser && node.isEnabled && node.isClickable &&
+            !node.isEditable && !node.isPassword && !ScanBugSafetyPolicy.isPotentiallyDestructive(label)) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            showTapHighlight(bounds)
+            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val done = performCandidateClick(child, "$path/$i", candidate)
+            child.recycle()
+            if (done) return true
+        }
+        return false
+    }
+
     private fun showAiSuggestions() {
         val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
         val root = targetRoot()
@@ -1082,6 +1209,8 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         clearTapHighlight()
+        aiHandler.removeCallbacksAndMessages(null)
+        isAiTesting = false
         removeRecordingChip()
         removeFloatingPanel()
         super.onDestroy()
