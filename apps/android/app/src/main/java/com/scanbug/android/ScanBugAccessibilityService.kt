@@ -8,6 +8,9 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.View
+import android.view.MotionEvent
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -33,6 +36,14 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private var inventoryText: TextView? = null
     private var recordingText: TextView? = null
     private var highlightView: View? = null
+    private var recordingChip: TextView? = null
+    private var isRecordingPaused = false
+    private var panelMinimizedForRecording = false
+    private var isAiTesting = false
+    private var aiActionCount = 0
+    private val aiHandler = Handler(Looper.getMainLooper())
+    private val aiVisited = mutableSetOf<String>()
+    private val aiResults = mutableListOf<String>()
     private var latestReport: String = ""
     private var isRecording = false
     private val recordedSteps = mutableListOf<RecordedStep>()
@@ -121,12 +132,14 @@ class ScanBugAccessibilityService : AccessibilityService() {
                 ).apply { bottomMargin = dp(6) }
             })
         }
+        action(if (isAiTesting) "Stop AI testing" else "Run AI testing", { if (isAiTesting) stopAiTesting("Stopped by tester.") else startAiTesting() }, true)
         action("Explore screen", { exploreCurrentScreen() })
-        action("AI test suggestions", { showAiSuggestions() }, true)
+        action("AI test suggestions", { showAiSuggestions() })
         action("Share inventory", { shareInventory() })
         action(if (isRecording) "Stop recording" else "Start recording", {
             if (isRecording) stopRecording() else startRecording()
         }, true)
+        if (isRecording) action(if (isRecordingPaused) "Resume recording" else "Pause recording", { if (isRecordingPaused) resumeRecording() else pauseRecording() })
         action("Share test flow", { shareTestFlow() })
         action("Review assertions", { reviewAssertions() })
         action("Save / load test case", { showTestCaseActions() })
@@ -189,15 +202,131 @@ class ScanBugAccessibilityService : AccessibilityService() {
         replayIndex = 0
         skippedSensitiveSteps = 0
         isRecording = true
+        isRecordingPaused = false
         updateRecordingUi()
-        statusText?.text = "Recording started. Tap controls in the selected app; captured actions will be highlighted."
+        statusText?.text = "Recording started. ScanBug is minimised; use the target app normally."
+        panelMinimizedForRecording = true
+        removeFloatingPanel()
+        showRecordingChip()
+    }
+
+    private fun pauseRecording() {
+        if (!isRecording) return
+        isRecordingPaused = true
+        clearTapHighlight()
+        updateRecordingUi()
+    }
+
+    private fun resumeRecording() {
+        if (!isRecording) return
+        isRecordingPaused = false
+        updateRecordingUi()
+    }
+
+    private fun showRecordingChip() {
+        if (recordingChip != null) return
+        val chip = TextView(this).apply {
+            text = if (isAiTesting) "✦ AI TEST  ·  0" else "● REC  ·  0"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFFFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            background = GradientDrawable().apply {
+                setColor(0xFFD45F3C.toInt())
+                cornerRadius = dp(24).toFloat()
+                setStroke(dp(1), 0xFFFFD6C8.toInt())
+            }
+            elevation = dp(8).toFloat()
+            setOnClickListener {
+                removeRecordingChip()
+                panelMinimizedForRecording = false
+                showFloatingPanel()
+            }
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, dp(46),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(12)
+            y = dp(90)
+        }
+        chip.setOnTouchListener(object : View.OnTouchListener {
+            private var downX = 0f
+            private var downY = 0f
+            private var startX = 0
+            private var startY = 0
+            private var dragged = false
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = event.rawX
+                        downY = event.rawY
+                        startX = params.x
+                        startY = params.y
+                        dragged = false
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - downX).toInt()
+                        val dy = (event.rawY - downY).toInt()
+                        if (kotlin.math.abs(dx) > dp(5) || kotlin.math.abs(dy) > dp(5)) dragged = true
+                        if (dragged) {
+                            params.x = (startX - dx).coerceAtLeast(0)
+                            params.y = (startY + dy).coerceAtLeast(dp(24))
+                            runCatching { windowManager?.updateViewLayout(chip, params) }
+                        }
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!dragged) v.performClick()
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+        runCatching {
+            windowManager?.addView(chip, params)
+            recordingChip = chip
+            updateRecordingChip()
+        }.onFailure {
+            Toast.makeText(this, "Could not minimise ScanBug: " + it.message, Toast.LENGTH_LONG).show()
+            panelMinimizedForRecording = false
+            showFloatingPanel()
+        }
+    }
+
+    private fun updateRecordingChip() {
+        recordingChip?.apply {
+            text = when { isAiTesting -> "✦ AI TEST  ·  " + aiActionCount; isRecordingPaused -> "Ⅱ PAUSED  ·  " + recordedSteps.size; else -> "● REC  ·  " + recordedSteps.size }
+            background = GradientDrawable().apply {
+                setColor(if (isAiTesting) 0xFF315F8C.toInt() else if (isRecordingPaused) 0xFF6D6862.toInt() else 0xFFD45F3C.toInt())
+                cornerRadius = dp(24).toFloat()
+                setStroke(dp(1), 0xFFFFD6C8.toInt())
+            }
+        }
+    }
+
+    private fun removeRecordingChip() {
+        recordingChip?.let { runCatching { windowManager?.removeView(it) } }
+        recordingChip = null
     }
 
     private fun updateRecordingUi() {
         recordingText?.apply {
-            text = if (isRecording) "● RECORDING  ·  ${recordedSteps.size} actions" else "○ READY  ·  ${recordedSteps.size} actions captured"
+            text = if (isRecording) {
+                if (isRecordingPaused) "Ⅱ PAUSED  ·  ${recordedSteps.size} actions"
+                else "● RECORDING  ·  ${recordedSteps.size} actions"
+            } else "○ READY  ·  ${recordedSteps.size} actions captured"
             setTextColor(if (isRecording) 0xFFB8422B.toInt() else 0xFF68635C.toInt())
         }
+        updateRecordingChip()
     }
 
     private fun showTapHighlight(bounds: Rect) {
@@ -225,6 +354,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
         runCatching {
             windowManager?.addView(marker, params)
             highlightView = marker
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (highlightView === marker) clearTapHighlight()
+            }, 900)
         }
     }
 
@@ -265,17 +397,17 @@ class ScanBugAccessibilityService : AccessibilityService() {
             return
         }
         val eventPackage = event.packageName?.toString()
-        if (isRecording && eventPackage == selectedPackage &&
+        if (isRecording && !isRecordingPaused && eventPackage == selectedPackage &&
             event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
             recordManualTap(event, selectedPackage)
         }
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (eventPackage == selectedPackage) showFloatingPanel()
+            if (eventPackage == selectedPackage) { if ((isRecording && panelMinimizedForRecording) || isAiTesting) showRecordingChip() else showFloatingPanel() }
             else if (!eventPackage.isNullOrBlank()) removeFloatingPanel()
             return
         }
-        if (eventPackage == selectedPackage) showFloatingPanel()
+        if (eventPackage == selectedPackage) { if ((isRecording && panelMinimizedForRecording) || isAiTesting) showRecordingChip() else showFloatingPanel() }
     }
 
     private fun recordManualTap(event: AccessibilityEvent, selectedPackage: String) {
@@ -345,6 +477,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     private fun stopRecording() {
         isRecording = false
+        isRecordingPaused = false
+        panelMinimizedForRecording = false
+        removeRecordingChip()
         updateRecordingUi()
         clearTapHighlight()
         inventoryText?.text = if (recordedSteps.isEmpty()) {
@@ -356,6 +491,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
                     " sensitive/destructive action(s) omitted." else ""
         }
         statusText?.text = "Recording stopped. ${recordedSteps.size} actions captured; ScanBug did not execute any actions."
+        showFloatingPanel()
     }
 
     private fun shareTestFlow() {
@@ -387,7 +523,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
 
     private fun previewNextReplayStep() {
-        if (isRecording) { statusText?.text = "Stop recording before replay."; return }
+        if (isRecording || isAiTesting) { statusText?.text = "Stop the current run before replay."; return }
         if (recordedSteps.isEmpty()) { statusText?.text = "Load or record a test case first."; return }
         if (replayIndex >= recordedSteps.size) { statusText?.text = "Replay reached the end. Reset to start again."; return }
         val step = recordedSteps[replayIndex]
@@ -736,6 +872,138 @@ class ScanBugAccessibilityService : AccessibilityService() {
             .onFailure { statusText?.text = "Could not open report share sheet: " + it.message }
     }
 
+    private fun startAiTesting() {
+        if (isRecording) {
+            statusText?.text = "Stop manual recording before starting AI testing."
+            return
+        }
+        val target = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val root = targetRoot()
+        if (target.isBlank() || root == null || root.packageName?.toString() != target) {
+            root?.recycle()
+            statusText?.text = "Open the selected target app first."
+            return
+        }
+        root.recycle()
+        isAiTesting = true
+        aiActionCount = 0
+        aiVisited.clear()
+        aiResults.clear()
+        panelMinimizedForRecording = true
+        statusText?.text = "AI runtime started. Exploring safe, labelled navigation controls only."
+        removeFloatingPanel()
+        showRecordingChip()
+        aiHandler.post { runAiTestingStep() }
+    }
+
+    private fun stopAiTesting(reason: String) {
+        aiHandler.removeCallbacksAndMessages(null)
+        isAiTesting = false
+        panelMinimizedForRecording = false
+        removeRecordingChip()
+        clearTapHighlight()
+        showFloatingPanel()
+        statusText?.text = "AI testing finished: $aiActionCount safe actions. $reason"
+        val root = targetRoot()
+        val ideas = if (root != null) {
+            val controls = mutableListOf<ControlInfo>()
+            collectControls(root, controls, 0, "root")
+            root.recycle()
+            LocalTestAdvisor.analyze(controls.map { LocalTestAdvisor.UiSignal(it.label.take(100), it.type, it.category, it.enabled, it.clickable) })
+        } else emptyList()
+        inventoryText?.text = buildString {
+            append("AI TEST RUN · ").append(aiActionCount).append(" actions\n")
+            if (aiResults.isEmpty()) append("No safe, labelled navigation controls were available.\n")
+            aiResults.forEachIndexed { i, result -> append(i + 1).append(". ").append(result).append("\n") }
+            if (ideas.isNotEmpty()) {
+                append("\nAI-GENERATED TEST IDEAS\n")
+                ideas.take(6).forEach { append("• ").append(it.title).append(" — ").append(it.priority).append("\n") }
+            }
+            append("\nThis offline agent only explored low-risk navigation. It did not enter data, authenticate, submit forms, transact or execute destructive actions.")
+        }
+    }
+
+    private fun runAiTestingStep() {
+        if (!isAiTesting) return
+        val target = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        val root = targetRoot()
+        if (root == null || root.packageName?.toString() != target) {
+            root?.recycle()
+            stopAiTesting("Target app screen unavailable; tester intervention is needed.")
+            return
+        }
+        val candidate = findNextSafeCandidate(root, "root")
+        root.recycle()
+        if (candidate == null || aiActionCount >= 8) {
+            stopAiTesting(if (aiActionCount >= 8) "Reached the safe exploration limit." else "No more safe navigation controls found.")
+            return
+        }
+        val liveRoot = targetRoot()
+        if (liveRoot == null || liveRoot.packageName?.toString() != target) {
+            liveRoot?.recycle()
+            stopAiTesting("Target app changed before action.")
+            return
+        }
+        val clicked = performCandidateClick(liveRoot, "root", candidate)
+        liveRoot.recycle()
+        if (!clicked) {
+            aiVisited.add(candidate.key)
+            aiHandler.postDelayed({ runAiTestingStep() }, 250)
+            return
+        }
+        aiVisited.add(candidate.key)
+        aiActionCount++
+        aiResults.add("Tapped '" + candidate.label + "' · " + candidate.resourceId)
+        updateRecordingChip()
+        statusText?.text = "AI testing: $aiActionCount safe actions explored."
+        aiHandler.postDelayed({ runAiTestingStep() }, 900)
+    }
+
+    private data class AiCandidate(val key: String, val label: String, val resourceId: String)
+
+    private fun findNextSafeCandidate(node: AccessibilityNodeInfo, path: String): AiCandidate? {
+        if (node.packageName?.toString() != prefs.getString(KEY_TARGET_PACKAGE, null)) return null
+        val label = nodeLabel(node).take(100)
+        val className = node.className?.toString().orEmpty()
+        val resourceId = node.viewIdResourceName.orEmpty()
+        val key = if (resourceId.isNotBlank()) resourceId else "$path|$className|$label"
+        val safeLabel = label.isNotBlank() && !node.isEditable && !node.isPassword &&
+            !node.isCheckable && !node.isLongClickable && !node.isScrollable &&
+            node.isVisibleToUser && node.isEnabled && node.isClickable &&
+            !ScanBugSafetyPolicy.isPotentiallyDestructive(label) &&
+            !Regex("(?i)\\b(login|sign in|sign up|log out|logout|account|profile|checkout|cart|book|reserve|call|email|share|settings|permission|install|uninstall)\\b").containsMatchIn(label) &&
+            Regex("(?i)\\b(home|back|menu|tab|search|filter|category|details|view|expand|collapse|next|previous|more|close panel)\\b").containsMatchIn(label)
+        if (safeLabel && !aiVisited.contains(key)) return AiCandidate(key, label, resourceId)
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findNextSafeCandidate(child, "$path/$i")
+            child.recycle()
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun performCandidateClick(node: AccessibilityNodeInfo, path: String, candidate: AiCandidate): Boolean {
+        if (node.packageName?.toString() != prefs.getString(KEY_TARGET_PACKAGE, null)) return false
+        val label = nodeLabel(node).take(100)
+        val resourceId = node.viewIdResourceName.orEmpty()
+        val key = if (resourceId.isNotBlank()) resourceId else "$path|" + node.className?.toString().orEmpty() + "|$label"
+        if (key == candidate.key && node.isVisibleToUser && node.isEnabled && node.isClickable &&
+            !node.isEditable && !node.isPassword && !ScanBugSafetyPolicy.isPotentiallyDestructive(label)) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            showTapHighlight(bounds)
+            return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val done = performCandidateClick(child, "$path/$i", candidate)
+            child.recycle()
+            if (done) return true
+        }
+        return false
+    }
+
     private fun showAiSuggestions() {
         val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
         val root = targetRoot()
@@ -952,6 +1220,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         clearTapHighlight()
+        aiHandler.removeCallbacksAndMessages(null)
+        isAiTesting = false
+        removeRecordingChip()
         removeFloatingPanel()
         super.onDestroy()
     }
