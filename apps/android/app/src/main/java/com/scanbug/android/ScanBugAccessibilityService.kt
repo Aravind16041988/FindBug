@@ -67,7 +67,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
                 val label = labelInput?.text?.toString()?.trim().orEmpty()
                 if (label.isBlank()) {
                     labelInput?.error = "Enter a visible label"
-                } else if (ScanBugSafetyPolicy.isPotentiallyDestructive(label)) {
+                } else if (ScanBugSafetyPolicy.ScanBugSafetyPolicy.isPotentiallyDestructive(label)) {
                     statusText?.text = "Blocked for safety: '$label' may perform a sensitive action."
                 } else {
                     val ok = tapVisibleLabel(label)
@@ -207,7 +207,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         val label = nodeLabel(node)
         if (node.isVisibleToUser && node.isEnabled && (node.isClickable || node.isEditable)) {
             val type = if (node.isEditable) "INPUT" else "BUTTON"
-            val safeNote = if (isPotentiallyDestructive(label)) " [SENSITIVE — NOT TO BE TAPPED]" else ""
+            val safeNote = if (ScanBugSafetyPolicy.isPotentiallyDestructive(label)) " [SENSITIVE — NOT TO BE TAPPED]" else ""
             output.add("${output.size + 1}. [$type] ${label.ifBlank { "(unlabelled control)" }}$safeNote")
         }
         for (i in 0 until node.childCount) {
