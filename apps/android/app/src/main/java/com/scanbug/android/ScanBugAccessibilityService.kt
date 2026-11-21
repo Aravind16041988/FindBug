@@ -42,6 +42,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
         var result: String = "NOT RUN"
     )
     private var skippedSensitiveSteps = 0
+    private var replayIndex = 0
 
     private data class ControlInfo(
         val category: String,
@@ -141,6 +142,22 @@ class ScanBugAccessibilityService : AccessibilityService() {
             setOnClickListener { loadSavedTestCase() }
         })
         container.addView(caseActions)
+
+        val replayActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        replayActions.addView(Button(this).apply {
+            text = "Replay next"
+            isAllCaps = false
+            setOnClickListener { previewNextReplayStep() }
+        })
+        replayActions.addView(Button(this).apply {
+            text = "Reset replay"
+            isAllCaps = false
+            setOnClickListener {
+                replayIndex = 0
+                statusText?.text = "Replay position reset. No actions performed."
+            }
+        })
+        container.addView(replayActions)
 
         inventoryText = TextView(this).apply {
             text = "Explore lists accessible controls and metadata only. It never taps controls or enters text."
@@ -311,6 +328,100 @@ class ScanBugAccessibilityService : AccessibilityService() {
         }.onFailure { statusText?.text = "Could not open share sheet: " + it.message }
     }
 
+
+    private fun previewNextReplayStep() {
+        if (isRecording) { statusText?.text = "Stop recording before replay."; return }
+        if (recordedSteps.isEmpty()) { statusText?.text = "Load or record a test case first."; return }
+        if (replayIndex >= recordedSteps.size) { statusText?.text = "Replay reached the end. Reset to start again."; return }
+        val step = recordedSteps[replayIndex]
+        val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
+        if (targetPackage.isBlank()) { statusText?.text = "Select a target app first."; return }
+        if (step.result == "BLOCKED" || ScanBugSafetyPolicy.isPotentiallyDestructive(step.action)) {
+            statusText?.text = "Safety guard blocked this step. No action performed."
+            replayIndex++
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Approve one replay action?")
+            .setMessage("Target: $targetPackage\nStep ${replayIndex + 1}/${recordedSteps.size}: ${step.action}\n\nScanBug will locate the exact resource ID or accessible label and request one click only. No typing, scrolling, swiping or automatic continuation. Approve only for an authorized test app.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Approve & click once") { _, _ -> executeApprovedReplayStep(step, targetPackage) }
+            .show()
+    }
+
+    private fun executeApprovedReplayStep(step: RecordedStep, targetPackage: String) {
+        val root = targetRoot()
+        if (root == null || root.packageName?.toString() != targetPackage) {
+            root?.recycle()
+            statusText?.text = "Target app is not active. No action performed."
+            return
+        }
+        val target = findReplayTarget(root, step, 0)
+        root.recycle()
+        if (target == null) {
+            statusText?.text = "No exact enabled clickable match found. No action performed."
+            return
+        }
+        try {
+            if (target.packageName?.toString() != targetPackage || !target.isEnabled ||
+                !target.isVisibleToUser || !target.isClickable ||
+                ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(target))) {
+                statusText?.text = "Replay safety check failed. No action performed."
+                return
+            }
+            if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                step.replayed = true
+                replayIndex++
+                statusText?.text = "One click requested. Inspect the app before approving the next step."
+            } else {
+                statusText?.text = "Android declined the click. Replay stopped."
+            }
+        } finally { target.recycle() }
+    }
+
+    private fun findReplayTarget(node: AccessibilityNodeInfo, step: RecordedStep, depth: Int): AccessibilityNodeInfo? {
+        if (depth > MAX_DEPTH) return null
+        val expectedId = step.resourceId
+        val expectedLabel = step.action.substringAfter("Tap: ", "").trim()
+        val matches = if (expectedId.isNotBlank() && expectedId != "not exposed") {
+            node.viewIdResourceName.orEmpty() == expectedId
+        } else {
+            expectedLabel.isNotBlank() &&
+                nodeLabel(node).replace(Regex("\\s+"), " ").trim().equals(expectedLabel, ignoreCase = true)
+        }
+        if (matches && node.packageName?.toString() == prefs.getString(KEY_TARGET_PACKAGE, null)) {
+            var candidate: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(node)
+            var climb = 0
+            while (candidate != null && climb < 6 &&
+                !(candidate.isClickable && candidate.isEnabled && candidate.isVisibleToUser)) {
+                val parent = candidate.parent
+                candidate.recycle()
+                candidate = parent
+                climb++
+            }
+            if (candidate != null && candidate.isClickable && candidate.isEnabled && candidate.isVisibleToUser) {
+                var ancestor: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(candidate)
+                var blocked = false
+                var level = 0
+                while (ancestor != null && level < 6) {
+                    if (ScanBugSafetyPolicy.isPotentiallyDestructive(nodeLabel(ancestor))) blocked = true
+                    val parent = ancestor.parent
+                    ancestor.recycle()
+                    ancestor = parent
+                    level++
+                }
+                if (!blocked) return candidate
+                candidate.recycle()
+            } else candidate?.recycle()
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findReplayTarget(child, step, depth + 1)
+            child.recycle()
+            if (found != null) return found
+        }
+        return null
+    }
 
     private fun reviewAssertions() {
         if (isRecording || recordedSteps.isEmpty()) {
