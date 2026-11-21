@@ -17,7 +17,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
+            setPadding(24, 28, 24, 28)
+            setBackgroundColor(0xFFF7F4EF.toInt())
         }
         val scroll = ScrollView(this)
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -26,13 +27,16 @@ class MainActivity : Activity() {
         setContentView(root)
 
         content.addView(TextView(this).apply {
-            text = "ScanBug — read-only Android UI explorer"
-            textSize = 22f
+            text = "ScanBug"
+            textSize = 30f
+            setTextColor(0xFF25231F.toInt())
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
         })
         content.addView(TextView(this).apply {
-            text = "Inspect accessible controls in an app you choose. ScanBug does not tap controls, enter text, take screenshots, or save UI snapshots. You perform all actions yourself."
-            textSize = 14f
-            setPadding(0, 12, 0, 16)
+            text = "Your mobile QA companion. Explore screens, get on-device test ideas, record manual actions and review test results."
+            textSize = 15f
+            setTextColor(0xFF68635C.toInt())
+            setPadding(0, 12, 0, 20)
         })
         appSpinner = Spinner(this)
         content.addView(appSpinner)
@@ -40,8 +44,9 @@ class MainActivity : Activity() {
         content.addView(actionButton("Review access & enable service") { showAccessibilityDisclosure() })
         content.addView(actionButton("Open selected app") { launchSelectedApp() })
         content.addView(TextView(this).apply {
-            text = "The Accessibility Service can inspect UI content exposed by the selected app while enabled. Use the ScanBug overlay and tap Explore screen. Inspection stays on this device and is not saved or sent by ScanBug."
+            text = "Hybrid AI runtime: local rule-based analysis works offline. Optional remote AI is not enabled in this build. UI metadata stays on this device; editable values and passwords are excluded."
             textSize = 13f
+            setTextColor(0xFF68635C.toInt())
             setPadding(0, 18, 0, 18)
         })
         content.addView(actionButton("Stop ScanBug session") {
