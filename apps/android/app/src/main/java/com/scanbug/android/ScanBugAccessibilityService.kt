@@ -407,7 +407,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
             else if (!eventPackage.isNullOrBlank()) removeFloatingPanel()
             return
         }
-        if (eventPackage == selectedPackage) { if (isRecording && panelMinimizedForRecording) showRecordingChip() else showFloatingPanel() }
+        if (eventPackage == selectedPackage) { if ((isRecording && panelMinimizedForRecording) || isAiTesting) showRecordingChip() else showFloatingPanel() }
     }
 
     private fun recordManualTap(event: AccessibilityEvent, selectedPackage: String) {
@@ -904,11 +904,22 @@ class ScanBugAccessibilityService : AccessibilityService() {
         clearTapHighlight()
         showFloatingPanel()
         statusText?.text = "AI testing finished: $aiActionCount safe actions. $reason"
+        val root = targetRoot()
+        val ideas = if (root != null) {
+            val controls = mutableListOf<ControlInfo>()
+            collectControls(root, controls, 0, "root")
+            root.recycle()
+            LocalTestAdvisor.analyze(controls.map { LocalTestAdvisor.UiSignal(it.label.take(100), it.type, it.category, it.enabled, it.clickable) })
+        } else emptyList()
         inventoryText?.text = buildString {
             append("AI TEST RUN · ").append(aiActionCount).append(" actions\n")
             if (aiResults.isEmpty()) append("No safe, labelled navigation controls were available.\n")
             aiResults.forEachIndexed { i, result -> append(i + 1).append(". ").append(result).append("\n") }
-            append("\nOnly low-risk navigation was automated. Inputs, authentication, transactions and destructive actions were not executed.")
+            if (ideas.isNotEmpty()) {
+                append("\nAI-GENERATED TEST IDEAS\n")
+                ideas.take(6).forEach { append("• ").append(it.title).append(" — ").append(it.priority).append("\n") }
+            }
+            append("\nThis offline agent only explored low-risk navigation. It did not enter data, authenticate, submit forms, transact or execute destructive actions.")
         }
     }
 
