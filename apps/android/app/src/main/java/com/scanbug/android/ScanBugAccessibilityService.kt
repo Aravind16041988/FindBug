@@ -1,6 +1,7 @@
 package com.scanbug.android
 
 import android.accessibilityservice.AccessibilityService
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -10,6 +11,9 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
+import android.widget.EditText
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -27,7 +31,16 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private var inventoryText: TextView? = null
     private var latestReport: String = ""
     private var isRecording = false
-    private val recordedSteps = mutableListOf<String>()
+    private val recordedSteps = mutableListOf<RecordedStep>()
+    private data class RecordedStep(
+        val action: String,
+        val controlType: String,
+        val resourceId: String,
+        val bounds: String,
+        var expected: String = "",
+        var actual: String = "",
+        var result: String = "NOT RUN"
+    )
     private var skippedSensitiveSteps = 0
 
     private data class ControlInfo(
