@@ -14,7 +14,8 @@ A native Kotlin Android companion to ScanBug. It inspects the accessibility tree
 - **Share inventory** opens Android's system share sheet only after the user taps it. No inventory is automatically uploaded, saved or transmitted.
 - **Manual test-flow recorder** captures only user-generated click events in the selected app while the user explicitly starts recording. It records labels and UI metadata, never enters text or invokes actions.
 - The recorder omits clicks whose labels match the conservative sensitive/destructive-action policy. It keeps the flow in memory only until the session ends and shares it only after the user explicitly taps Share test flow.
-- **Review assertions** lets the tester define an expected result, record the observed result, and mark each step PASS, FAIL, BLOCKED or NOT RUN. These are manual assessments, not automated assertions.
+- **Review assertions** lets the tester define an expected result, record the observed result, and mark each step PASS, FAIL, BLOCKED or NOT RUN.
+- **Check expected text** compares each non-empty expected string with accessible, visible, non-editable text on the currently active selected-app screen. It marks matching checks PASS and missing text FAIL. This is a simple current-screen text assertion, not semantic or business-flow validation; run it only after navigating to the screen you want to verify.
 - **Save test case** stores one reusable test case locally on the phone; **Load saved** restores it for review or sharing. The saved case remains on the device until app data is cleared or the app is uninstalled.
 - Shared test-case reports include each step, expected result, actual result and manual status.
 - No playback/replay is implemented; recorded steps remain a human-reviewed test case.
