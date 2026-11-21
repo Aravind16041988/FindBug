@@ -20,7 +20,7 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Read-only UI inventory. It never invokes target-app actions or reads editable values.
+ * Controlled QA companion: inventory is read-only; replay clicks require explicit per-step approval. Editable values are never read.
  * Reports are shared only after the user explicitly taps Share inventory.
  */
 class ScanBugAccessibilityService : AccessibilityService() {
@@ -72,7 +72,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
             setBackgroundColor(0xEE202B3C.toInt())
         }
         container.addView(TextView(this).apply {
-            text = "SCANBUG • READ-ONLY EXPLORER"
+            text = "SCANBUG • CONTROLLED QA EXPLORER"
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
