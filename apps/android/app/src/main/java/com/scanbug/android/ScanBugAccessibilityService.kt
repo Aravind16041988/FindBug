@@ -108,6 +108,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
             isAllCaps = false
             setOnClickListener {
                 recordedSteps.clear()
+                replayIndex = 0
                 skippedSensitiveSteps = 0
                 isRecording = true
                 statusText?.text = "Recording manual taps. ScanBug will not perform actions."
@@ -336,6 +337,11 @@ class ScanBugAccessibilityService : AccessibilityService() {
         val step = recordedSteps[replayIndex]
         val targetPackage = prefs.getString(KEY_TARGET_PACKAGE, null).orEmpty()
         if (targetPackage.isBlank()) { statusText?.text = "Select a target app first."; return }
+        if (step.resourceId.isBlank() || step.resourceId == "not exposed") {
+            statusText?.text = "This step has no stable resource ID. Replay skipped; perform it manually."
+            replayIndex++
+            return
+        }
         if (step.result == "BLOCKED" || ScanBugSafetyPolicy.isPotentiallyDestructive(step.action)) {
             statusText?.text = "Safety guard blocked this step. No action performed."
             replayIndex++
@@ -382,13 +388,9 @@ class ScanBugAccessibilityService : AccessibilityService() {
     private fun findReplayTarget(node: AccessibilityNodeInfo, step: RecordedStep, depth: Int): AccessibilityNodeInfo? {
         if (depth > MAX_DEPTH) return null
         val expectedId = step.resourceId
-        val expectedLabel = step.action.substringAfter("Tap: ", "").trim()
-        val matches = if (expectedId.isNotBlank() && expectedId != "not exposed") {
+        val matches = expectedId.isNotBlank() &&
+            expectedId != "not exposed" &&
             node.viewIdResourceName.orEmpty() == expectedId
-        } else {
-            expectedLabel.isNotBlank() &&
-                nodeLabel(node).replace(Regex("\\s+"), " ").trim().equals(expectedLabel, ignoreCase = true)
-        }
         if (matches && node.packageName?.toString() == prefs.getString(KEY_TARGET_PACKAGE, null)) {
             var candidate: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(node)
             var climb = 0
@@ -551,6 +553,7 @@ class ScanBugAccessibilityService : AccessibilityService() {
             val json = org.json.JSONObject(raw)
             val steps = json.getJSONArray("steps")
             recordedSteps.clear()
+            replayIndex = 0
             for (i in 0 until steps.length()) {
                 val item = steps.getJSONObject(i)
                 recordedSteps.add(
