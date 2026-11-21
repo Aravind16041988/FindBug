@@ -1,48 +1,51 @@
-# ScanBug Android — read-only UI explorer POC
+# ScanBug Android 0.9.0 — controlled mobile QA explorer
 
-A native Kotlin Android companion to ScanBug. It inspects the accessibility tree exposed by a user-selected installed app directly on the phone.
+ScanBug is a native Android QA companion for apps the tester explicitly selects and is authorized to test.
 
-## Implemented
+## What's implemented
 
-- Lists launchable apps visible under Android package-visibility rules.
-- Opens a user-selected app and scopes the ScanBug session to that package.
-- Uses Android Accessibility Service, enabled explicitly by the user, to inspect the selected app's exposed UI tree.
-- Shows a visible ScanBug overlay only while the selected target app is active; unrelated content-change events do not repeatedly recreate the overlay.
-- **Explore screen** creates a grouped inventory of exposed inputs, buttons/actions, tabs, selections and other controls.
-- Each inventory entry includes accessible label, inferred control type, Android resource ID (when exposed), class, screen bounds, hierarchy path and available state flags.
-- Password values and editable field contents are never read for display or included in reports.
-- **Share inventory** opens Android's system share sheet only after the user taps it. No inventory is automatically uploaded, saved or transmitted.
-- **Manual test-flow recorder** captures only user-generated click events in the selected app while the user explicitly starts recording. It records labels and UI metadata, never enters text or invokes actions.
-- The recorder omits clicks whose labels match the conservative sensitive/destructive-action policy. It keeps the flow in memory only until the session ends and shares it only after the user explicitly taps Share test flow.
-- **Review assertions** lets the tester define an expected result, record the observed result, and mark each step PASS, FAIL, BLOCKED or NOT RUN.
-- **Check expected text** compares each non-empty expected string with accessible, visible, non-editable text on the currently active selected-app screen. It marks matching checks PASS and missing text FAIL. This is a simple current-screen text assertion, not semantic or business-flow validation; run it only after navigating to the screen you want to verify.
-- **Save test case** stores one reusable test case locally on the phone; **Load saved** restores it for review or sharing. The saved case remains on the device until app data is cleared or the app is uninstalled.
-- Shared test-case reports include each step, expected result, actual result and manual status.
-- No playback/replay is implemented; recorded steps remain a human-reviewed test case.
-- The overlay has no text-entry, scroll, swipe or unattended replay function. Each individual click requires a separate confirmation.
-- A prominent in-app Accessibility disclosure appears before the user is sent to Android Accessibility Settings. The user must affirmatively accept; declining does not enable the service.
+- Lists launchable apps and scopes inspection to the selected package.
+- Uses Android Accessibility Service only after an explicit in-app disclosure and user enablement.
+- Explores accessible controls and metadata (labels, types, resource IDs, bounds, hierarchy and state).
+- Manual recording captures click events from the selected app while the tester explicitly starts recording.
+- Recording shows a live action count and a temporary outline around controls when Android exposes their screen bounds.
+- When a click event has no source node, ScanBug may capture its non-editable event label and class metadata. Events that cannot be safely identified are not recorded.
+- Sensitive/destructive action labels are filtered conservatively. This is a heuristic safeguard, not a guarantee.
+- Review assertions, expected/actual results, locally saved test cases, manually approved single-step replay, local run history and HTML report sharing are supported.
+- **AI Test Advisor:** on-device heuristic analysis of accessible UI metadata suggests functional, negative, navigation, input-validation, selection and accessibility test placeholders. A tester can inspect and add a suggestion to the editable test case.
+- Updated compact, scrollable, warm-neutral overlay with clear recording state and action controls.
 
-## Accessibility disclosure and privacy
+## Hybrid AI runtime status
 
-The Accessibility Service can inspect UI content exposed by the selected app while the service is enabled. This is inherently sensitive access. ScanBug displays accessible labels and UI metadata locally. Editable field values and password values are excluded. A report is shared only when the user explicitly requests it through Android's share sheet.
+This release implements the **local/offline analysis layer** and a provider-neutral boundary for future AI integration. The current suggestions are deterministic heuristics, not responses from a generative AI model. No remote AI endpoint, API key or network transmission is configured in this build.
 
-Test only apps you own or are authorized to test. Do not use the POC with sensitive personal or financial apps. The user can disable the service at any time in Android Accessibility Settings.
+A future approved remote provider can enrich suggestions from a privacy-filtered metadata payload only after explicit project configuration and consent. Do not embed provider secrets in the APK. Prefer an organisation-managed gateway, short-lived credentials and server-side key storage.
 
-This app is a QA/testing utility, not an accessibility tool designed to assist people with disabilities. It must not set `isAccessibilityTool=true`. For Google Play distribution, the developer must accurately complete the Accessibility API declaration, provide the required disclosure/demo evidence, and comply with the current policy. Approval is not guaranteed. A debug APK distributed outside Google Play may still trigger Play Protect warnings; these changes do not guarantee that warning will disappear.
+## Privacy and safety
+
+- Editable text and password values are not read for inventory, AI analysis or reports.
+- The local advisor receives only labels, control types, categories and basic state metadata. Password/OTP/destructive labels are excluded from its input.
+- No screenshots are captured and no screen data is uploaded.
+- Inventory, saved test cases and execution history remain local unless the tester explicitly shares them.
+- Replay is a separate, individually approved click action. No unattended chaining, text entry, scrolling or swiping.
+- AI suggestions are placeholders, not verified requirements or test results. A human tester must review them.
+- Keyword-based sensitive-action filtering can miss risky actions or flag harmless ones. Never use ScanBug to operate real payment, banking, medical or other sensitive accounts.
+
+Use only apps and environments you own or are authorized to test. The user can disable Accessibility access at any time in Android Settings.
+
+This is a QA utility, not an accessibility tool designed to assist people with disabilities. It must not set `isAccessibilityTool=true`. Google Play distribution requires accurate Accessibility API declarations and compliance with current policy; approval is not guaranteed.
 
 ## Limitations
 
-This is not a complete mobile automation tester. It records user-performed click steps and supports manually authored expected/actual results with a tester-selected status. It does not automatically assert app behavior, replay journeys, take screenshots, perform actions, comprehensively detect crashes, or generate formal automated test reports. Only UI exposed through Android accessibility APIs can be discovered; custom-drawn, protected, or unlabeled controls may not appear. Resource IDs and bounds are provided only when Android exposes them.
+Only controls exposed through Android accessibility APIs can be inspected. Custom-rendered, protected, unlabeled or source-less controls may not be highlighted or captured. A visual outline appears only when usable screen bounds are exposed. Local suggestions are based on visible UI metadata and cannot infer backend rules, business requirements or hidden workflows. Expected-text checks inspect only the current visible screen and do not prove a business transaction succeeded.
 
-## Build with Android Studio
+## Build
 
-1. Install Android Studio with Android SDK Platform 35 and JDK 17.
-2. Open the `apps/android` folder as an Android Studio project.
-3. Allow Gradle sync to download the Android Gradle Plugin and Kotlin plugin.
-4. Connect an Android phone with USB debugging enabled, or use an emulator.
-5. Build and run the app.
-6. Read the in-app Accessibility disclosure and explicitly accept before enabling the service in Android Settings.
-7. Return to ScanBug, select an app, and tap **Open selected app**.
-8. In the target app, tap **Explore screen** on the ScanBug overlay.
-9. Review the grouped inventory. Tap **Share inventory** to intentionally share the plain-text report.
-10. Tap **Stop** on the overlay or **Stop ScanBug session** in ScanBug to end the selected-app session. Disable the service in Android Settings to stop Accessibility access completely.
+1. Open `apps/android` in Android Studio with JDK 17 and Android SDK Platform 35.
+2. Sync Gradle and build the debug APK.
+3. Install ScanBug on a test device.
+4. Read and accept the Accessibility disclosure, then enable the service in Android Settings.
+5. Select an app you are authorized to test and open it.
+6. Use **Explore screen** to inspect the current screen or **AI test suggestions** to generate local test placeholders.
+7. Start recording, perform actions manually in the target app, and stop recording to review the captured flow.
+8. Review assertions, save a test case and share reports only when needed.
